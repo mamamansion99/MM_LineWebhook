@@ -2,12 +2,14 @@
 const BOOKING_DOC_TEMPLATE_ID = '1RYY-YlVhET0YC_LwZgtAzkTOPvGUBESQyx2TpestHH4'; 
 const BOOKING_PDF_FOLDER_ID   = '1B8bPFAp0KYxQiO2DdUkF_Vy3ogf2EPyx';
 const SHEET_ID   = '1KsimOBXcP2PhZ3Y16DXo7KKcTO9sMNksKJbxc5VEHEQ';
-const SHEET_NAME = 'Sheet1';
+const SHEET_NAME = 'Sheet1'; // legacy sheet for booking data
+const ROOMS_SHEET_ID = SHEET_ID; // Rooms sheet lives in the same spreadsheet
+const ROOMS_SHEET_NAME = 'Rooms';
 const LINE_TOKEN = PropertiesService.getScriptProperties().getProperty('LINE_TOKEN');
 const PAID_MENU_ID = 'richmenu-809f92d6bbba5cc330d0a89f92323a3a';
 const PREBOOK_SHEET_NAME   = 'PreBook';
 const PREBOOK_CODE_PREFIX  = '#PB';
-const SHEET_ROOMS = 'Rooms';
+const SHEET_ROOMS = ROOMS_SHEET_NAME;
 const REVENUE_MASTER_ID   = '1qJU42SUgGgOZY_9X0PedL9yCkLr4d0ni1C4RRRM7g1M'; 
 const REVENUE_BILLS_SHEET = 'Horga_Bills';                                    // <-- ชีตปลายทาง
 const ASSET_SHEET_ID      = '1vGZ9Tp7lNqHBIpMgcnk_ZlQr6mdkg7bsQr2l1aYwEbk';     // Assets_Management spreadsheet
@@ -95,7 +97,7 @@ function normalizeStatus_(s) {
 }
 
 function readRoomStatus_() {
-  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Rooms');
+  const sh = SpreadsheetApp.openById(ROOMS_SHEET_ID).getSheetByName(ROOMS_SHEET_NAME);
   if (!sh) return {};
   const values = sh.getDataRange().getValues();
   const header = values.shift().map(String);
@@ -1690,7 +1692,7 @@ function _findUserIdCol_(headers) {
 
 
 function setRoomStatus_(roomId, newStatus) {
-  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Rooms');
+  const sh = SpreadsheetApp.openById(ROOMS_SHEET_ID).getSheetByName(ROOMS_SHEET_NAME);
   if (!sh) throw new Error('Rooms sheet not found');
   const values = sh.getDataRange().getValues();
   const header = values.shift().map(String);
@@ -1960,7 +1962,7 @@ function handleStatusEdit(e) {
       let roomPrice = 0;
       try {
         const ssR = SpreadsheetApp.openById(SHEET_ID);
-        const shRooms = ssR.getSheetByName('Rooms');
+        const shRooms = ssR.getSheetByName(ROOMS_SHEET_NAME);
         if (shRooms && roomId) {
           const valsR = shRooms.getDataRange().getValues();
           const hdrR  = valsR.shift().map(h => String(h || '').trim().toLowerCase());
@@ -2089,7 +2091,7 @@ function handleStatusEdit(e) {
 
 /** Helper: find RoomId from Rooms by Line ID (case-insensitive). */
 function _findRoomByUserId_(userId) {
-  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Rooms');
+  const sh = SpreadsheetApp.openById(ROOMS_SHEET_ID).getSheetByName(ROOMS_SHEET_NAME);
   if (!sh) return '';
   const H  = sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(h => String(h||'').trim());
   const Hl = H.map(h => h.toLowerCase());
@@ -2109,7 +2111,7 @@ function _findRoomByUserId_(userId) {
 
 /** Internal: load Rooms headers quickly */
 function _roomsHeaders_() {
-  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Rooms');
+  const sh = SpreadsheetApp.openById(ROOMS_SHEET_ID).getSheetByName(ROOMS_SHEET_NAME);
   const H  = sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(h=>String(h||'').trim());
   return { sh, H, Hl: H.map(h=>h.toLowerCase()) };
 }
@@ -2320,7 +2322,7 @@ function createBookingPdf_(row) {
   //         contact_line, address, remaining_amount, notes }
 
   // --- 0) Read room price from Rooms sheet ---
-  var ssRooms = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Rooms');
+  var ssRooms = SpreadsheetApp.openById(ROOMS_SHEET_ID).getSheetByName(ROOMS_SHEET_NAME);
   var headR   = ssRooms.getRange(1,1,1, ssRooms.getLastColumn()).getValues()[0].map(String);
   var cRoomId = headR.findIndex(function(h){ return h.toLowerCase().includes('room'); }) + 1;
   var cPrice  = headR.findIndex(function(h){ return /(ราคาห้อง|room\s*price|price)/i.test(h); }) + 1;
@@ -2426,7 +2428,7 @@ function _rowLink_(row){
 // เมื่อสถานะเป็น Paid → ตั้งคิวที่ Rooms (คอลัมน์ Horganice Done? = FALSE)
 function _markRoomNeedsHorganice_(roomId, payload) {
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  const shRooms = ss.getSheetByName('Rooms');
+  const shRooms = ss.getSheetByName(ROOMS_SHEET_NAME);
   if (!shRooms) return;
 
   const head = shRooms.getRange(1,1,1,shRooms.getLastColumn()).getValues()[0].map(String);
@@ -2491,7 +2493,7 @@ function _setRoomParking_(roomId, value) {
 function _getRoomPriceFromRooms_(roomId) {
   if (!roomId) return 0;
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  const sh = ss.getSheetByName('Rooms');
+  const sh = ss.getSheetByName(ROOMS_SHEET_NAME);
   if (!sh) return 0;
 
   const values = sh.getDataRange().getValues();
@@ -2533,7 +2535,7 @@ function dailyMoveOutSweep() {
 function dailyCheckinReminder() {
   const tz = Session.getScriptTimeZone() || 'Asia/Bangkok';
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  const sh = ss.getSheetByName('Rooms');
+  const sh = ss.getSheetByName(ROOMS_SHEET_NAME);
   if (!sh) return;
 
   const H = sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(h=>String(h||'').trim());
@@ -2839,7 +2841,7 @@ const CHECKIN_NOTICE = {
     'car_roof': 800,      // มีหลังคา
     'car_noroof': 500,    // ไม่มีหลังคา
   },
-  ROOMS_SHEET: 'Rooms',
+  ROOMS_SHEET: ROOMS_SHEET_NAME,
   COLS: {
     roomId: 'RoomID',
     lineId: 'Line ID',
