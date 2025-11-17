@@ -1,835 +1,1648 @@
-/**************************************
- * Mama Mansion LINE BOT (Apps Script)
- * ROLE: Heavy tasks only (push-only)
- **************************************/
-
-const PROPS = PropertiesService.getScriptProperties();
-const WORKER_SECRET = PROPS.getProperty('WORKER_SECRET') || '';
-const CHANNEL_ACCESS_TOKEN = PROPS.getProperty('CHANNEL_ACCESS_TOKEN');
-const LINE_NOTIFY_TOKEN = PROPS.getProperty('LINE_NOTIFY_TOKEN'); // create a LINE Notify token for admin/group
-
-const SHEET_ID            = PROPS.getProperty('SHEET_ID');
-const SHEET_NAME          = PROPS.getProperty('SHEET_NAME') || 'Sheet1';
-
-// 🔸 NEW: Payment Slip folders
-const SLIP_FOLDER_ID      = PROPS.getProperty('SLIP_FOLDER_ID');
-const TEMP_SLIP_FOLDER_ID = PROPS.getProperty('TEMP_SLIP_FOLDER_ID');
-
-// 🔸 NEW: ID Card folders
-const ID_FOLDER_ID        = PROPS.getProperty('ID_FOLDER_ID');
-const TEMP_ID_FOLDER_ID   = PROPS.getProperty('TEMP_ID_FOLDER_ID');
-
-const QR_IMAGE_FILE_ID    = PROPS.getProperty('QR_IMAGE_FILE_ID');
-const QR_IMAGE_URL = `https://drive.google.com/uc?export=view&id=${QR_IMAGE_FILE_ID}`;
-
-const REVENUE_SHEET_ID    = PROPS.getProperty('REVENUE_SHEET_ID');
-
-// Reconcile sheets
-const SH_HORGA_BILLS   = 'Horga_Bills';
-const SH_PAYMENTS_IN   = 'Payments_Inbox';
-const SH_REVIEW_QUEUE  = 'Review_Queue';
-
-// TH months map for OCR parsing
-const TH_MONTHS = {
-  'ม.ค.':1,'มกราคม':1,
-  'ก.พ.':2,'กุมภาพันธ์':2,
-  'มี.ค.':3,'มีนาคม':3,
-  'เม.ย.':4,'เมษายน':4,
-  'พ.ค.':5,'พฤษภาคม':5,
-  'มิ.ย.':6,'มิถุนายน':6,
-  'ก.ค.':7,'กรกฎาคม':7,
-  'ส.ค.':8,'สิงหาคม':8,
-  'ก.ย.':9,'กันยายน':9,
-  'ต.ค.':10,'ตุลาคม':10,
-  'พ.ย.':11,'พฤศจิกายน':11,
-  'ธ.ค.':12,'ธันวาคม':12
+/**************** CONFIG ****************/
+const BOOKING_DOC_TEMPLATE_ID = '1RYY-YlVhET0YC_LwZgtAzkTOPvGUBESQyx2TpestHH4'; 
+const BOOKING_PDF_FOLDER_ID   = '1B8bPFAp0KYxQiO2DdUkF_Vy3ogf2EPyx';
+const SHEET_ID   = '1KsimOBXcP2PhZ3Y16DXo7KKcTO9sMNksKJbxc5VEHEQ';
+const SHEET_NAME = 'Sheet1';
+const LINE_TOKEN = PropertiesService.getScriptProperties().getProperty('LINE_TOKEN');
+const PAID_MENU_ID = 'richmenu-809f92d6bbba5cc330d0a89f92323a3a';
+const PREBOOK_SHEET_NAME   = 'PreBook';
+const PREBOOK_CODE_PREFIX  = '#PB';
+const SHEET_ROOMS = 'Rooms';
+const REVENUE_MASTER_ID   = '1qJU42SUgGgOZY_9X0PedL9yCkLr4d0ni1C4RRRM7g1M'; 
+const REVENUE_BILLS_SHEET = 'Horga_Bills';                                    // <-- ชีตปลายทาง
+const ASSET_SHEET_ID      = '1vGZ9Tp7lNqHBIpMgcnk_ZlQr6mdkg7bsQr2l1aYwEbk';     // Assets_Management spreadsheet
+const ASSET_CAR_SHEET     = 'Car';
+const ASSET_SLOT_STATUS_RESERVED  = 'Reserved';
+const ASSET_SLOT_STATUS_AVAILABLE = 'Available';
+const ROOM_OPENCHAT_LINKS = {
+  A: 'https://line.me/ti/g2/dONR8eAdCqgxzVm_5R_rT0OHcVthoguInw74LQ?utm_source=invitation&utm_medium=link_copy&utm_campaign=default'
 };
+const CHECKIN_PICKER_MAX_DATETIME = '2026-01-14T18:00'; // LINE datetimepicker format (YYYY-MM-DDThhmm)
+const CHECKIN_PICKER_TIMEZONE = 'Asia/Bangkok';
+const CHECKIN_PICKER_TZ_OFFSET = '+07:00';
+const CHECKIN_PICKER_EARLIEST_MINUTES = 10 * 60; // 10:00 น.
+const CHECKIN_PICKER_EARLIEST_TIME_LABEL = '10:00';
+const CHECKIN_PICKER_LATEST_MINUTES = 18 * 60; // 18:00 น.
+const CHECKIN_PICKER_LATEST_TIME_LABEL = '18:00';
+const CHECKIN_PICKER_COMMAND_KEYWORDS = [
+  'เปลี่ยนวันเช็คอิน',
+  'เปลี่ยนวันที่เช็คอิน',
+  'เปลี่ยนวันทีเช็คอิน',
+  'เปลี่ยนวันเชคอิน',
+  'เปลี่ยนเวลาเช็คอิน',
+  'เปลี่ยนเวลาเชคอิน',
+  'changecheckindate',
+  'changecheckintime'
+];
 
-const ADMIN_GROUP_ID = PropertiesService.getScriptProperties().getProperty('ADMIN_GROUP_ID');
-const FRONTEND_BASE = PROPS.getProperty('FRONTEND_BASE') || 'https://mama-moveout.pages.dev/';
+const ROOMS_CHECKED_IN_ALIASES = ['checked in', 'check in', 'checked-in', 'check-in'];
+const SAFETY_RULE_UPDATE_IMAGE_URL = 'https://drive.google.com/uc?export=view&id=1ctAOSMw22OSyhY4eYoJz08PlWKPH72xT';
+const SAFETY_RULE_UPDATE_PREVIEW_URL = SAFETY_RULE_UPDATE_IMAGE_URL;
+const SAFETY_RULE_UPDATE_MESSAGE = [
+  '📢 แจ้งกฎความปลอดภัยและการใช้กุญแจ/คีย์การ์ด',
+  '1) กุญแจเป็นแบบสั่งทำ ซื้อเพิ่มดอกละ 500 บาท คืนวันที่ย้ายออกจะได้รับ 400 บาท',
+  '2) ได้คีย์การ์ดฟรี 1 ใบ ต้องคืนเมื่อย้ายออก ซื้อเพิ่มใบละ 100 บาท',
+  '⚠️ หากทำหายหรือไม่คืน มีค่าปรับ 1,000 บาท (หักจากเงินประกัน)',
+  '🔑 ลืมกุญแจไว้ในห้อง: 08:00-20:00 ช่างเปิดประตู 20 บาท/ครั้ง, หลัง 20:00 บริการเปิด 100 บาท/ครั้ง'
+].join('\n');
+const SHOE_STORAGE_BROADCAST_MESSAGE = [
+  '👟✨ แจ้งเรื่องการเก็บรองเท้าหน่อยนะครับ',
+  'ตอนนี้ทางหอมี "ตู้เก็บรองเท้า" หน้าล็อบบี้ให้เรียบร้อยแล้ว',
+  'รบกวนลูกหอช่วยกันย้ายรองเท้าที่วางไว้หน้าทางเข้า',
+  'มาเก็บในตู้รองเท้าแทนนะครับ',
+  'จะได้ทั้งเป็นระเบียบ สะอาด แล้วก็ดูปลอดภัยมากขึ้นด้วย',
+  'ขอบคุณที่ช่วยกันดูแลพื้นที่ส่วนกลางของเรานะครับ 🙏🤍'
+].join('\n');
+
+var PARKING_CAPACITY = (typeof PARKING_CAPACITY !== 'undefined')
+  ? PARKING_CAPACITY
+  : { roofed: 36, open: 22 };
 
 
+const ROOMS_STATUS_OCCUPIED = ['reserved','occupied','จอง','soon','checked in','check in']; // คำที่สื่อว่าอยู่จริง
+const ROOMS_MOVEOUT_ALIASES = ['move out date','วันที่ย้ายออก'];
 
-function doGet(e) {
-  const action = (e.parameter.action || '').toLowerCase();
+const ROOMS_CURRENT_CODE_ALIASES  = ['current booking code','hg code','mm code','booking code','รหัสการจอง (ปัจจุบัน)'];
+const ROOMS_CURRENT_USER_ALIASES = [
+  'line id',                        // ✅ ใช้เป็นชื่อหลักใหม่
+  'current tenant user id',         // เผื่อใช้ header เก่า
+  'ผู้เช่าปัจจุบัน line id'        // รองรับภาษาไทย
+];
 
-  if (action === 'rooms') {
-    const ss = SpreadsheetApp.openById(SHEET_ID);
-    const sh = ss.getSheetByName('Rooms');
-    const vals = sh.getDataRange().getValues();
-    const hdr  = vals.shift().map(h => String(h || '').trim());
+const ROOMS_MENU_SYNC_AT_ALIASES  = ['menu linked at','menu sync at','เวลาลิงก์เมนู'];
+const DAYS_AHEAD_SOON = 90; 
+const OCCUPIED_STATUS_KEYWORDS = ROOMS_STATUS_OCCUPIED;
+const ROOMS_CODE_ALIASES       = ROOMS_CURRENT_CODE_ALIASES;
 
-    const cRoom = colEq_(hdr, 'RoomId');
-    const cSt   = colEq_(hdr, 'Status');
-    const cMo   = colEq_(hdr, 'Move-out Date');
-    const cNext = colEq_(hdr, 'Next Available');
-
-    const rooms = vals.map(r => ({
-      roomId:        cRoom > -1 ? String(r[cRoom] || '').toUpperCase().trim() : '',
-      status:        cSt   > -1 ? String(r[cSt] || '').toLowerCase().trim()   : '',
-      moveoutDate:   cMo   > -1 ? toIso_(r[cMo])                               : '',
-      nextAvailable: cNext > -1 ? toIso_(r[cNext])                             : ''
-    }));
-
-    return ContentService
-      .createTextOutput(JSON.stringify({ rooms }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-
-  return ContentService.createTextOutput('Alive');
+function _isFullMonthEra_(checkinDate){
+  var cutoff = new Date('2026-01-01T00:00:00+07:00'); // Asia/Bangkok
+  var d = new Date(checkinDate.getFullYear(), checkinDate.getMonth(), checkinDate.getDate());
+  return d >= cutoff;
 }
 
-function doPost(e) {
-  try {
-    if (!e?.postData?.contents) {
-      return ContentService.createTextOutput('OK');
-    }
-
-const headers = e?.headers || {};
-const body    = JSON.parse(e.postData.contents || '{}');
-
-const secretFromHeader = headers['X-Worker-Secret'] || headers['x-worker-secret'] || '';
-const secretFromBody   = body.workerSecret || body.secret || '';
-const provided         = String(secretFromHeader || secretFromBody || '');
-
-const isEdgeCall = !!body.act;           // our Worker’s direct calls (e.g. moveout)
-const isEvents   = Array.isArray(body.events); // Worker forward of LINE events
-
-// before checking secret
-console.log('ACT_WEBHOOK', JSON.stringify({
-  act: body?.act, bodyKeys: Object.keys(body||{}), hdr: Object.keys(headers||{})
-}));
-
-if (!provided || provided !== WORKER_SECRET) {
-  console.error('FORBIDDEN_WORKER_SECRET', {
-    where: isEdgeCall ? 'edge' : (isEvents ? 'events' : 'unknown'),
-    got: provided ? '(present)' : '(empty)'
-  });
-  return ContentService
-    .createTextOutput(JSON.stringify({ ok:false, error:'forbidden' }))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-// ---- routing after passing the single check ----
-if (isEdgeCall) {
-  if (body.act === 'moveout') {
-    const ok = handleMoveoutFromWorker_(body);
-    return ContentService
-      .createTextOutput(JSON.stringify({ ok }))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-  return ContentService
-    .createTextOutput(JSON.stringify({ ok:false, error:'unknown_act' }))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-// LINE events forwarded from Worker
-if (isEvents) {
-  const events = body.events;
-  events.forEach(ev => {
-    try {
-      if (ev.type === 'message') {
-        if (ev.message?.type === 'text')  handleTextPush_(ev); // <— new push-only handler
-        if (ev.message?.type === 'image') handleImage(ev);     // already push in rent flow
-      } else if (ev.type === 'postback') {
-        handlePostback(ev); // your postback paths mostly push already
-      }
-    } catch (inner) {
-      console.error('EVENT_ERROR_FWD', inner, JSON.stringify(ev));
-    }
-  });
-  return ContentService.createTextOutput('OK');
-}
-
-
-
-    // LINE webhook ปกติ
-    const events = Array.isArray(body.events) ? body.events : [];
-    events.forEach(ev => {
-      try {
-        if (ev.type === 'message') {
-          if (ev.message?.type === 'text')  handleText(ev);
-          if (ev.message?.type === 'image') handleImage(ev);
-        } else if (ev.type === 'postback') {
-          handlePostback(ev);
-        }
-      } catch (inner) {
-        console.error('EVENT_ERROR', inner, JSON.stringify(ev));
-      }
-    });
-
-    return ContentService.createTextOutput('OK');
-  } catch (err) {
-    console.error('MM_LINE: EVENT_HANDLER_ERROR ' + err);
-    return ContentService.createTextOutput('OK');
-  }
-}
-
-/*************** 3) LINE PUSH / LOADING HELPERS **************/
-function pushMessage(to, messages) {
-  if (!to) return;
-  const url = 'https://api.line.me/v2/bot/message/push';
-  const options = {
-    method: 'post',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + CHANNEL_ACCESS_TOKEN
-    },
-    payload: JSON.stringify({ to, messages }),
-    muteHttpExceptions: true
-  };
-  const res = UrlFetchApp.fetch(url, options);
-  console.log('PUSH_STATUS code=' + res.getResponseCode() + ' body=' + res.getContentText());
-}
-
-/*************** LINE REPLY HELPER ***************/
-function replyMessage(replyToken, messages) {
-  if (!replyToken) return;
-  const url = 'https://api.line.me/v2/bot/message/reply';
-  const options = {
-    method: 'post',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': 'Bearer ' + CHANNEL_ACCESS_TOKEN
-    },
-    payload: JSON.stringify({ replyToken, messages }),
-    muteHttpExceptions: true
-  };
-  const res = UrlFetchApp.fetch(url, options);
-  console.log('REPLY_STATUS code=' + res.getResponseCode() + ' body=' + res.getContentText());
-}
-
-
-function pushWithLoading(to, messages, seconds) {
-  if (!to) return;
-  safeStartLoading(to, seconds || 5);
-  try { Utilities.sleep(300); } catch (e) {}
-  return pushMessage(to, messages);
-}
-
-function safeStartLoading(userId, seconds) {
-  try { if (userId) startLoading(userId, seconds || 5); } catch (e) { Logger.log('LOAD_ERR ' + e); }
-}
-
-function startLoading(userId, seconds) {
-  const secs = Math.max(5, Math.min(seconds || 5, 60));
-  const url = 'https://api.line.me/v2/bot/chat/loading/start';
-  const res = UrlFetchApp.fetch(url, {
-    method: 'post',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + CHANNEL_ACCESS_TOKEN },
-    payload: JSON.stringify({ chatId: userId, loadingSeconds: secs }),
-    muteHttpExceptions: true
-  });
-  console.log('LOADING status=' + res.getResponseCode() + ' ' + res.getContentText());
-}
-
-
-/*************** 4) MESSAGE ROUTING ****************/
-
-function handleText(event) {
-  const userId     = event.source?.userId || '';
-  const replyToken = event.replyToken;
-  const userText   = (event.message?.text || '').trim();
-
-  // Rent flow intercepts
-  if (rentTextGate_(event)) return;
-
-  // Booking code flow
-  const m = userText.match(/^#?\s*MM\d{3,}$/i);
-  if (!m) return;
-
-  const codeDisplay = m[0].toUpperCase().replace(/\s/g, '');
-  const codeKey     = codeDisplay.replace(/^#/, '');
-  const row = findBookingRow(codeKey);
-  if (!row) {
-    return replyMessage(replyToken, [{ type:'text', text:'ไม่พบข้อมูลรหัสนี้' }]);
-  }
-
-  return replyMessage(replyToken, [{
-    type:'template',
-    altText:'ยืนยันการจอง',
-    template:{
-      type:'buttons',
-      text:([
-        `รหัส: ${codeDisplay}`,
-        `ห้อง: ${row.roomId || '-'}`,
-        `ชื่อ: ${row.name}`
-      ].join('\n')).slice(0,160),
-      actions:[ { type:'postback', label:'ยืนยัน', data:'act=confirm&code='+codeKey } ]
-    }
-  }]);
-}
-
-
-function rentTextGate_(event) {
-  const userId = event.source?.userId || '';
-  const txtRaw = (event.message?.text || '').trim();
-  if (!userId || !txtRaw) return false;
-
-  const cache = CacheService.getUserCache();
-  let flow = {};
-  try { flow = JSON.parse(cache.get(userId + ':rent_flow') || '{}'); } catch (e) {}
-
-  if (!flow.step) return false;
-
-  // cancel
-  if (/^(ยกเลิก|cancel)$/i.test(txtRaw)) {
-    cache.remove(userId + ':rent_flow');
-    pushWithLoading(userId, [{ type:'text', text:'ยกเลิกขั้นตอนชำระค่าเช่าแล้วครับ' }]);
-    return true;
-  }
-
-  if (flow.step === 'await_room') {
-    const room = txtRaw.toUpperCase().replace(/\s/g,'');
-    if (!/^[A-Z]?\d{3,4}$/.test(room)) {
-      pushWithLoading(userId, [{ type:'text', text:'รูปแบบห้องไม่ถูกต้อง ลองอีกครั้ง เช่น A101' }]);
-      return true;
-    }
-    flow.room = room;
-    flow.step = 'await_rent_slip';
-    cache.put(userId + ':rent_flow', JSON.stringify(flow), 2 * 60 * 60);
-
-    pushWithLoading(userId, [{ type:'text', text:`ห้อง ${room} ครับ\nโปรดส่ง “รูปสลิปค่าเช่า” 1 รูปได้เลย` }]);
-    return true;
-  }
-
-  return false;
-}
-
-function handleRentSlipImage_(event) {
-  const userId = event.source?.userId || '';
-  const messageId = event.message?.id;
-  const cache = CacheService.getUserCache();
-  let flow = {};
-  try { flow = JSON.parse(cache.get(userId + ':rent_flow') || '{}'); } catch(e) {}
-
-  if (flow.step !== 'await_rent_slip') {
-    return pushWithLoading(userId, [{ type:'text', text:'กรุณาพิมพ์เบอร์ห้องก่อน (เช่น A101)' }]);
-  }
-
-  safeStartLoading(userId, 5);
-  try {
-    const blob = fetchLineContentAsBlob_(messageId);
-    const type = (blob.getContentType() || '').toLowerCase();
-    const size = blob.getBytes().length;
-    if (!/^image\/(jpeg|png)$/.test(type)) return pushWithLoading(userId, [{ type:'text', text:'รองรับเฉพาะภาพ jpg/png ครับ' }]);
-    if (size > 10 * 1024 * 1024)         return pushWithLoading(userId, [{ type:'text', text:'ไฟล์ใหญ่เกิน 10MB ครับ' }]);
-
-    const ts  = Utilities.formatDate(new Date(), 'Asia/Bangkok', "yyyy-MM-dd'T'HH-mm-ss");
-    const ext = type === 'image/png' ? 'png' : 'jpg';
-    blob.setName(`${flow.room || 'ROOM'}_SLIP_${ts}.${ext}`);
-
-    const tempFileId = DriveApp.getFolderById(TEMP_SLIP_FOLDER_ID).createFile(blob).getId();
-    const publicUrl  = `https://drive.google.com/uc?export=view&id=${tempFileId}`;
-
-    let res = { ok:false };
-    try {
-      res = tryMatchAndConfirm_({
-        room:       flow.room,
-        slipUrl:    publicUrl,
-        lineUserId: userId,
-        fileId:     tempFileId     // ← เพิ่มบรรทัดนี้
-      }) || { ok:false };
-    } catch (e) { Logger.log('tryMatchAndConfirm_ error: ' + e); }
-
-    cache.remove(userId + ':rent_flow');
-
-    if (res.ok) {
-      try { moveFileToFolder_(tempFileId, TEMP_SLIP_FOLDER_ID, SLIP_FOLDER_ID); } catch(e) {}
-      return pushWithLoading(userId, [{ type:'text', text:'✅ รับสลิปแล้ว ยืนยันการชำระเรียบร้อย ขอบคุณครับ' }]);
-    }
-
-    if (res.reason === 'no_open_bill')   return pushWithLoading(userId, [{ type:'text', text:'⏳ ได้รับสลิปแล้ว แต่ยังไม่พบบิลของเดือนนี้ กำลังตรวจสอบ' }]);
-    if (res.reason === 'unknown_room')   return pushWithLoading(userId, [{ type:'text', text:'⏳ รับข้อมูลแล้ว ทีมงานจะตรวจสอบห้องอีกครั้ง' }]);
-    return pushWithLoading(userId, [{ type:'text', text:'⏳ ได้รับสลิปแล้ว กำลังตรวจสอบโดยเจ้าหน้าที่' }]);
-
-  } catch (e) {
-    console.error('RENT_SLIP_SAVE_ERROR ' + e);
-    return pushWithLoading(userId, [{ type:'text', text:'บันทึกไฟล์ไม่สำเร็จ โปรดลองใหม่ครับ' }]);
-  }
-}
-
-
-/* 4.2) IMAGE FLOW */
-function handleImage(event) {
-  const userId = event.source?.userId || '';
-  const messageId = event.message?.id;
-  if (!userId || !messageId) {
-    return pushWithLoading(userId, [{ type:'text', text:'รับไฟล์ไม่สำเร็จ ลองอีกครั้งนะคะ' }]);
-  }
-
-  // === RENT image gate (run FIRST) ===
-  try {
-    const userCache = CacheService.getUserCache();
-    let rentFlow = {};
-    try { rentFlow = JSON.parse(userCache.get(userId + ':rent_flow') || '{}'); } catch(e) {}
-    if (rentFlow.step === 'await_rent_slip') {
-      return handleRentSlipImage_(event);
-    }
-  } catch(e) { Logger.log('rent-image-gate ' + e); }
-
-  // existing booking/ID routing (keep)
-  const awaiting = CacheService.getUserCache().get(userId + ':awaiting');
-  if (awaiting === 'id') return handleIdImage_(event);
-  return handleSlipImage_(event);
-}
-
-function handleSlipImage_(event) {
-  const userId    = event.source?.userId || '';
-  const messageId = event.message?.id;
-
-  if (!userId || !messageId) {
-    return send_(event, [{ type:'text', text:'รับไฟล์ไม่สำเร็จ ลองอีกครั้งนะคะ' }], 3);
-  }
-
-  try {
-    const blob = fetchLineContentAsBlob_(messageId);
-    const type = (blob.getContentType() || '').toLowerCase();
-    const size = blob.getBytes().length;
-
-    // validate type/size
-    if (!/^image\/(jpeg|png)$/.test(type)) {
-      return send_(event, [{ type:'text', text:'รองรับเฉพาะภาพ jpg/png ค่ะ' }], 0);
-    }
-    if (size > 10 * 1024 * 1024) {
-      return send_(event, [{ type:'text', text:'ไฟล์ใหญ่เกิน 10MB ค่ะ' }], 0);
-    }
-
-    // find the booking row awaiting payment from this user
-    const found = findAwaitingRowByUser_(userId);
-    if (!found) {
-      return send_(event, [{ type:'text', text:'ยังไม่พบรายการ กรุณาพิมพ์รหัส #MM### ก่อนส่งสลิปค่ะ' }], 0);
-    }
-
-    // save slip image into temp folder
-    const codeDisplay = '#' + found.code;
-    const tempFileId  = saveSlipToSpecificFolder_(codeDisplay, blob, TEMP_SLIP_FOLDER_ID);
-    const publicUrl   = `https://drive.google.com/uc?export=view&id=${tempFileId}`;
-
-    // write to Payments_Inbox immediately
-    recordSlipToInbox_({
-      lineUserId: userId,
-      room: found.roomId || '',
-      slipUrl: publicUrl,
-      declaredAmount: null,
-      note: 'from booking flow (awaiting user confirm)'
-    });
-
-    // keep state for confirm step
-    const cache = CacheService.getUserCache();
-    cache.put(
-      userId,
-      JSON.stringify({ fileId: tempFileId, code: found.code, rowIndex: found.rowIndex, kind: 'slip' }),
-      2 * 60 * 60
-    );
-
-    // ask user to confirm the slip (push-friendly)
-    return send_(event, [{
-      type: 'template',
-      altText: 'ยืนยันสลิป',
-      template: {
-        type: 'confirm',
-        text: `ใช้ภาพนี้เป็นสลิปของรหัส ${codeDisplay} ใช่ไหม?`,
-        actions: [
-          { type: 'postback', label: 'ใช่',   data: 'act=slip_yes' },
-          { type: 'postback', label: 'ไม่ใช่', data: 'act=slip_no'  }
-        ]
-      }
-    }], 5); // show loading briefly then push confirm card
-
-  } catch (e) {
-    console.error('SLIP_SAVE_ERROR ' + e);
-    return send_(event, [{ type:'text', text:'บันทึกไฟล์ไม่สำเร็จ โปรดลองใหม่อีกครั้งค่ะ' }], 0);
-  }
-}
-
-
-function handleIdImage_(event) {
-  const userId    = event.source?.userId || '';
-  const messageId = event.message?.id;
-
-  if (!userId || !messageId) {
-    return send_(event, [{ type: 'text', text: 'รับไฟล์ไม่สำเร็จ ลองอีกครั้งนะคะ' }], 0);
-  }
-
-  try {
-    const blob = fetchLineContentAsBlob_(messageId);
-    const type = (blob.getContentType() || '').toLowerCase();
-    const size = blob.getBytes().length;
-
-    // validate type/size
-    if (!/^image\/(jpeg|png)$/.test(type)) {
-      return send_(event, [{ type: 'text', text: 'รองรับเฉพาะภาพ jpg/png ค่ะ' }], 0);
-    }
-    if (size > 10 * 1024 * 1024) {
-      return send_(event, [{ type: 'text', text: 'ไฟล์ใหญ่เกิน 10MB ค่ะ' }], 0);
-    }
-
-    // read state saved from slip confirmation step
-    const cache = CacheService.getUserCache();
-    let slipInfo = {};
-    try { slipInfo = JSON.parse(cache.get(userId) || '{}'); } catch (e) {}
-
-    if (!slipInfo.code || !slipInfo.rowIndex) {
-      return send_(event, [{ type: 'text', text: 'ยังไม่พบรายการ กรุณาส่งสลิปใหม่ก่อนค่ะ' }], 0);
-    }
-
-    // save ID image into temp folder
-    const codeDisplay = '#' + slipInfo.code;
-    const tempFileId  = saveIdToSpecificFolder_(codeDisplay, blob, TEMP_ID_FOLDER_ID);
-
-    // keep state for confirm step
-    cache.put(
-      userId,
-      JSON.stringify({ fileId: tempFileId, code: slipInfo.code, rowIndex: slipInfo.rowIndex, kind: 'id' }),
-      2 * 60 * 60
-    );
-
-    // ask user to confirm the ID photo
-    return send_(event, [{
-      type: 'template',
-      altText: 'ยืนยันรูปบัตร',
-      template: {
-        type: 'confirm',
-        text: `ใช้ภาพนี้เป็น "บัตรประชาชนของผู้ที่จะลงนาม" สำหรับรหัส ${codeDisplay} ใช่ไหม?`,
-        actions: [
-          { type: 'postback', label: 'ใช่',   data: 'act=id_yes' },
-          { type: 'postback', label: 'ไม่ใช่', data: 'act=id_no'  }
-        ]
-      }
-    }], 5); // brief loading then push confirm
-
-  } catch (e) {
-    console.error('ID_SAVE_ERROR ' + e);
-    return send_(event, [{ type: 'text', text: 'บันทึกไฟล์ไม่สำเร็จ โปรดลองใหม่อีกครั้งค่ะ' }], 0);
-  }
-}
-
-
-
-function handlePostback(event) {
-  const userId = event.source?.userId || '';
-  const data   = parseKv(event.postback?.data || '');
-
-    // === CHECK-IN (LINE datetime picker) ===
-  if (data.act === 'checkin_pick') {
-    if (!userId) return;
-    const p = event.postback && event.postback.params ? event.postback.params : {};
-    let date = "", time = "";
-
-    // LINE may send either `datetime: "YYYY-MM-DDTHH:MM"`, or separate `date` / `time`
-    if (p.datetime && p.datetime.indexOf("T") !== -1) {
-      const parts = p.datetime.split("T");
-      date = parts[0] || "";
-      time = parts[1] || "";
-    } else {
-      date = String(p.date || "");
-      time = String(p.time || "");
-    }
-
-    try {
-      const roomId = saveCheckinByUserId_(userId, date, time);  // writes to Rooms
-      send_(event, [{
-        type: "text",
-        text: `บันทึกวัน–เวลาเช็คอินเรียบร้อยค่ะ ✅\nห้อง: ${roomId || "-"}\nวันที่: ${date || "-"}\nเวลา: ${time || "-"}`
-      }], 0);
-    } catch (e) {
-      console.error("CHECKIN_ERROR " + e);
-      send_(event, [{ type: "text", text: "บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้งค่ะ" }], 0);
-    }
-    return;
-  }
-
-/**
- * Find the tenant row in Rooms by Line ID and write date/time + confirm flags.
- * Returns the RoomId (if found) for a nicer confirmation message.
- */
-function saveCheckinByUserId_(userId, date, time) {
-  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName("Rooms");
-  if (!sh) throw new Error("Rooms sheet not found");
-
-  const H  = sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0]
-              .map(h => String(h || "").trim());
-  const Hl = H.map(h => h.toLowerCase());
-
-  // Required columns (case/alias tolerant)
-  const cRoom = Hl.findIndex(h => h.includes("room")) + 1;
-  const cUser = Hl.findIndex(h => h.includes("line id")) + 1;
-  const cDate = H.indexOf("CheckinDate") + 1;
-  const cTime = H.indexOf("CheckinTime") + 1;
-  const cConf = H.indexOf("CheckinConfirmed") + 1;
-  const cAt   = H.indexOf("ConfirmedAt") + 1;
-
-  if (!cUser || !cDate || !cTime || !cConf || !cAt) {
-    throw new Error("Missing columns in Rooms (need Line ID, CheckinDate, CheckinTime, CheckinConfirmed, ConfirmedAt)");
-  }
-
-  const last = sh.getLastRow();
-  if (last < 2) throw new Error("Rooms has no data");
-
-  const rows = sh.getRange(2,1, last-1, sh.getLastColumn()).getValues();
-  let rowIndex = -1, roomId = "";
-
-  for (let i = 0; i < rows.length; i++) {
-    const ln = String(rows[i][cUser-1] || "").trim();
-    if (ln === userId) {
-      rowIndex = i + 2;
-      roomId   = String(rows[i][cRoom-1] || "").trim();
-      break;
-    }
-  }
-  if (rowIndex === -1) throw new Error("User not found in Rooms");
-
-  // Write values
-  if (date) sh.getRange(rowIndex, cDate).setValue(date);
-  if (time) sh.getRange(rowIndex, cTime).setValue(time);
-  sh.getRange(rowIndex, cConf).setValue(true);
-  sh.getRange(rowIndex, cAt).setValue(new Date());
-
-  return roomId;
-}
-
-
-  // === RENT CANCEL ===
-  if (data.act === 'rent_cancel') {
-    if (userId) {
-      const cache = CacheService.getUserCache();
-      cache.remove(userId + ':rent_flow');
-      cache.remove(userId + ':awaiting');
-    }
-    return; // nothing to say to user here
-  }
-
-  // === RENT FLOW START ===
-  if (data.act === 'pay_rent') {
-    if (!userId) return;
-    const cache = CacheService.getUserCache();
-    cache.put(userId + ':rent_flow', JSON.stringify({ step: 'await_room' }), 2 * 60 * 60);
-    return send_(event, [{ type:'text', text:'พิมพ์เบอร์ห้องของคุณ (เช่น A101)' }], 3);
-  }
-
-  // Worker-answered postbacks → ignore locally
-  if (data.act && (data.act.startsWith('ROOM_') || data.act.startsWith('FIX_') || data.act.startsWith('RES_'))) {
-    return;
-  }
-
-  // === GROUP APPROVAL / REJECT ===
-  if (data.act === 'mgr_approve' || data.act === 'mgr_reject') {
-    const groupId = event.source?.groupId || '';
-    const billId  = String(data.bill || '').trim();
-    const slipId  = String(data.slip || '').trim();
-    const room    = String(data.room || '').trim();
-
-    if (!billId || !slipId) {
-      if (groupId) pushMessage(groupId, [{ type:'text', text:'ไม่พบข้อมูลบิล/สลิปในคำสั่งนี้' }]);
-      return;
-    }
-
-    if (data.act === 'mgr_approve') {
-      try {
-        setBillSlipReceived_(billId, slipId, 'Slip Received (Group Approved)');
-        const inbox = findInboxRowBySlipId_(slipId);
-        if (inbox) {
-          const sh  = openRevenueSheetByName_('Payments_Inbox');
-          const hdr = getHeaders_(sh);
-          const cSt = idxOf_(hdr, 'matchstatus');
-          const cCf = idxOf_(hdr, 'confidence');
-          const cNt = idxOf_(hdr, 'notes');
-          if (cSt>-1) sh.getRange(inbox.rowIndex, cSt+1).setValue('approved_group');
-          if (cCf>-1) sh.getRange(inbox.rowIndex, cCf+1).setValue(1.0);
-          if (cNt>-1) sh.getRange(inbox.rowIndex, cNt+1).setValue('approved by group');
-        }
-
-        const MANAGER_USER_ID = PROPS.getProperty('MANAGER_USER_ID') || '';
-        if (MANAGER_USER_ID) {
-          pushMessage(MANAGER_USER_ID, [{
-            type:'text',
-            text:`🧾 ยืนยันการจ่ายเงิน\nห้อง: ${room || '-'}\nบิล: ${billId}\nสลิป: ${slipId}\n\nโปรดกดยืนยันในแอพ Horganice`
-          }]);
-        }
-
-        if (groupId) pushMessage(groupId, [{ type:'text', text:'✅ บันทึกอนุมัติแล้ว แจ้งผู้จัดการให้ยืนยันใน Horganice' }]);
-      } catch (e) {
-        if (groupId) pushMessage(groupId, [{ type:'text', text:'เกิดข้อผิดพลาดขณะอนุมัติ โปรดลองอีกครั้ง' }]);
-      }
-      return;
-    }
-
-    if (data.act === 'mgr_reject') {
-      enqueueReview_({ room, billId, reason: 'group_reject', slipId, note: 'rejected in group' });
-      if (groupId) pushMessage(groupId, [{ type:'text', text:'❌ ปฏิเสธแล้ว — ส่งเข้า Review Queue' }]);
-      return;
-    }
-  }
-
-  // === BOOKING CONFIRM ===
-  if (data.act === 'confirm' && data.code) {
-    const userCache = CacheService.getUserCache();
-    userCache.remove(userId + ':awaiting');
-
-    safeStartLoading(userId, 5);
-    try {
-      const codeKey = String(data.code || '').toUpperCase();
-      const info = getBookingByCode_(codeKey);
-      if (!info) {
-        return send_(event, [{ type: 'text', text: 'ไม่พบข้อมูลรหัสนี้' }], 0);
-      }
-
-      const st = (info.status || '').toLowerCase();
-
-      if (st === 'paid' || st === 'จ่ายแล้ว') {
-        return send_(event, [{ type: 'text', text: 'รหัสนี้ชำระเงินเรียบร้อยแล้ว ✅' }], 0);
-      }
-
-      if (st === 'expired' || st === 'cancelled' || st === 'ยกเลิก') {
-        const current = getRoomStatus_(info.roomId);
-        if (current === 'avail') {
-          try { setRoomStatus_(info.roomId, 'hold'); } catch (e) {}
-          const sh = openSheet_();
-          const headers = sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(h => String(h||'').trim());
-          const cStatus = hdrIdx(headers, ['status','สถานะ']);
-          const cConfAt = hdrIdx(headers, ['confirmed at','ยืนยันเมื่อ']);
-          const cUserId = hdrIdx(headers, ['line user id','ผู้ใช้ไลน์']);
-          if (cStatus > -1) sh.getRange(info.rowIndex, cStatus+1).setValue('Awaiting Payment');
-          if (cConfAt > -1) sh.getRange(info.rowIndex, cConfAt+1).setValue(new Date());
-          if (cUserId > -1) sh.getRange(info.rowIndex, cUserId+1).setValue(userId);
-
-          return send_(event, [
-            { type: 'text', text: 'รหัสนี้เคยหมดอายุ แต่ห้องยังว่างอยู่ → เปิดให้ยืนยันอีกครั้งแล้วค่ะ กรุณาโอนตาม QR และส่งสลิปกลับมาในแชทนี้' },
-            { type: 'image', originalContentUrl: QR_IMAGE_URL, previewImageUrl: QR_IMAGE_URL }
-          ], 5);
-        } else {
-          return send_(event, [{ type: 'text', text: 'ขออภัย รหัสนี้หมดอายุและห้องถูกจองแล้วค่ะ กรุณาจองห้องใหม่ผ่านทางเว็บไซต์' }], 0);
-        }
-      }
-
-      const ok = updateRowOnConfirm(codeKey, userId);
-      if (!ok) throw new Error('Row not found for code ' + codeKey);
-
-      const userCache2 = CacheService.getUserCache();
-      userCache2.put(userId + ':awaiting', 'slip', 2 * 60 * 60);
-
-      return send_(event, [
-        { type: 'text',
-          text: '✅ ยืนยันการจองเรียบร้อย\nกรุณาชำระค่าจอง 2000 บาท และส่งสลิปกลับมาที่แชทนี้\nทีมงานจะตรวจสอบและยืนยันให้ภายใน 24 ชม.' },
-        { type: 'image', originalContentUrl: QR_IMAGE_URL, previewImageUrl: QR_IMAGE_URL }
-      ], 5);
-
-    } catch (e) {
-      console.error('CONFIRM_ERROR ' + e);
-      return send_(event, [{ type: 'text', text: 'บันทึกไม่สำเร็จ โปรดลองอีกครั้งค่ะ' }], 0);
-    }
-  }
-
-  // === SLIP CONFIRM YES/NO ===
-  if (data.act === 'slip_yes' || data.act === 'slip_no') {
-    const userCache = CacheService.getUserCache();
-    const cached = userCache.get(userId);
-    if (!cached) {
-      return send_(event, [{ type: 'text', text: 'หมดเวลายืนยันสลิป กรุณาส่งภาพสลิปใหม่อีกครั้งค่ะ' }], 0);
-    }
-
-    const info = JSON.parse(cached); // { fileId, code, rowIndex, kind }
-    const fileId   = info.fileId;
-    const rowIndex = info.rowIndex;
-
-    if (data.act === 'slip_no') {
-      try { DriveApp.getFileById(fileId).setTrashed(true); } catch (e) {}
-      userCache.remove(userId);
-      return send_(event, [{ type: 'text', text: 'ลบรูปแล้วค่ะ โปรดส่งภาพสลิปใหม่อีกครั้ง' }], 0);
-    }
-
-    safeStartLoading(userId, 5);
-    try {
-      moveFileToFolder_(fileId, TEMP_SLIP_FOLDER_ID, SLIP_FOLDER_ID);
-      const fileUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
-      updateSheetOnSlipReceived_(rowIndex, fileUrl);
-
-      // keep booking info and mark awaiting ID
-      const idInfo = { fileId, code: info.code, rowIndex, kind: 'id' };
-      userCache.put(userId, JSON.stringify(idInfo), 2 * 60 * 60);
-      userCache.put(userId + ':awaiting', 'id', 2 * 60 * 60);
-
-      return send_(event, [
-        { type: 'text', text: 'ได้รับสลิปแล้วค่ะ ขอบคุณค่ะ 🙏' },
-        { type: 'text', text: '📸 ขั้นตอนถัดไป: โปรดส่ง “ภาพบัตรประชาชนของผู้ที่จะลงนามในสัญญาเช่า” มาในแชทนี้นะคะ' }
-      ], 3);
-    } catch (e) {
-      console.error('SLIP_CONFIRM_ERROR ' + e);
-      return send_(event, [{ type: 'text', text: 'มีข้อผิดพลาด โปรดลองใหม่อีกครั้งค่ะ' }], 0);
-    }
-  }
-
-  // === ID CONFIRM YES/NO ===
-  if (data.act === 'id_yes' || data.act === 'id_no') {
-    const userCache = CacheService.getUserCache();
-    const cached = userCache.get(userId);
-    if (!cached) {
-      return send_(event, [{ type: 'text', text: 'หมดเวลายืนยันรูป โปรดส่งภาพบัตรประชาชนใหม่อีกครั้งค่ะ' }], 0);
-    }
-
-    const info = JSON.parse(cached); // { fileId, code, rowIndex, kind:'id' }
-    const fileId   = info.fileId;
-    const rowIndex = info.rowIndex;
-
-    if (data.act === 'id_no') {
-      try { DriveApp.getFileById(fileId).setTrashed(true); } catch (e) {}
-      userCache.remove(userId);
-      return send_(event, [{ type: 'text', text: 'ลบรูปแล้วค่ะ โปรดส่งภาพบัตรประชาชนใหม่อีกครั้ง' }], 0);
-    }
-
-    safeStartLoading(userId, 5);
-    try {
-      moveFileToFolder_(fileId, TEMP_ID_FOLDER_ID, ID_FOLDER_ID);
-      const fileUrl = `https://drive.google.com/uc?export=view&id=${fileId}`;
-      updateSheetOnIdReceived_(rowIndex, fileUrl);
-
-      userCache.remove(userId);
-      userCache.remove(userId + ':awaiting');
-
-      return send_(event, [
-        { type: 'text', text: 'ได้รับภาพบัตรประชาชนเรียบร้อยค่ะ ✅ เจ้าหน้าที่จะตรวจสอบและยืนยันการจองโดยเร็ว' }
-      ], 3);
-    } catch (e) {
-      console.error('ID_CONFIRM_ERROR ' + e);
-      return send_(event, [{ type: 'text', text: 'มีข้อผิดพลาด โปรดลองใหม่อีกครั้งค่ะ' }], 0);
-    }
-  }
-}
-
-
-/*************** 5) SHEET HELPERS (booking, rooms, hdr) **************/
-function openSheet_() {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
-  const sh = ss.getSheetByName(SHEET_NAME);
-  if (!sh) throw new Error('Sheet not found: ' + SHEET_NAME);
-  return sh;
-}
-
-// Rooms helpers
-function _normStatus_(s) {
+function normalizeStatus_(s) {
   s = String(s || '').toLowerCase().trim();
-  if (['reserved','จองแล้ว'].includes(s)) return 'reserved';
-  if (['hold','ถือห้อง','ถือจอง'].includes(s)) return 'hold';
+
+  // red
+  if (['reserved','จอง','จองแล้ว','checked in','check in','checked-in','checkin','occupied'].includes(s))
+    return 'reserved';
+
+  // yellow (optional): treat "soon" as HOLD instead of red
+  if (['hold','ถือห้อง','ถือจอง','soon','กำลังจะว่าง'].includes(s))
+    return 'hold';
+
   return 'avail';
 }
 
-function getRoomStatus_(roomId) {
-  if (!roomId) return '';
+function readRoomStatus_() {
   const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Rooms');
-  if (!sh) return '';
+  if (!sh) return {};
   const values = sh.getDataRange().getValues();
-  const header = values.shift().map(h => String(h||'').trim());
+  const header = values.shift().map(String);
   const iId  = header.findIndex(h => h.toLowerCase().includes('room'));
   const iSt  = header.findIndex(h => h.toLowerCase().includes('status') || h.includes('สถานะ'));
-  for (let r = 0; r < values.length; r++) {
-    const id = String(values[r][iId] || '').trim();
-    if (id === roomId) {
-      return _normStatus_(values[r][iSt] || '');
+  const out = {};
+  values.forEach(r => {
+    const id = String(r[iId] || '').trim();
+    const st = normalizeStatus_(r[iSt] || '');
+    if (id) out[id] = st;
+  });
+  return out;
+}
+
+// --- Parking helpers ---
+const PARKING_NO_TOKENS = [
+  'no','noparking','none','ไม่','ไม่ขอใช้','ไม่มี','ไม่ใช้','n/a','na','ไม่จอด'
+];
+const PARKING_ROOFED_TOKENS = [
+  'roofed','roof','covered','car_roof','carroof','roof plan','roofed plan','มีหลังคา','roofed(มีหลังคา)','roofed(covered)','yes'
+];
+const PARKING_OPEN_TOKENS = [
+  'open','open air','open-air','outdoor','no roof','noroof','car_noroof','carnoroof','กลางแจ้ง',
+  'yes 500','yes500','yes-500','yes(500)','open plan'
+];
+
+function _normalizeParkingToken_(txt) {
+  const raw = String(txt || '').trim().toLowerCase();
+  if (!raw) return '';
+
+  const cleaned = raw.replace(/[()]/g, '').replace(/\s+/g, ' ').trim();
+  const collapsed = cleaned.replace(/\s+/g, '');
+  const candidates = [raw, cleaned, collapsed];
+
+  for (const cand of candidates) {
+    if (!cand) continue;
+    if (PARKING_NO_TOKENS.includes(cand)) return '';
+  }
+
+  for (const cand of candidates) {
+    if (!cand) continue;
+    for (const token of PARKING_ROOFED_TOKENS) {
+      if (cand === token || cand.startsWith(token + ' ')) return 'roofed';
     }
   }
+
+  for (const cand of candidates) {
+    if (!cand) continue;
+    for (const token of PARKING_OPEN_TOKENS) {
+      if (cand === token || cand.startsWith(token + ' ')) return 'open';
+    }
+  }
+
   return '';
 }
+
+function _parkingCellValue_(plan, wantsParking) {
+  if (!wantsParking) return 'No';
+  if (plan === 'roofed') return 'Roofed';
+  if (plan === 'open') return 'Open';
+  return 'Yes';
+}
+
+function _parkingLineLabel_(plan, wantsParking) {
+  if (!wantsParking) return 'ไม่ขอใช้';
+  if (plan === 'roofed') return 'ขอใช้ (มีหลังคา)';
+  if (plan === 'open') return 'ขอใช้ (กลางแจ้ง)';
+  return 'ขอใช้';
+}
+
+function _parseParkingFromParams_(params) {
+  const parkingRaw = String(params.parking || '').trim().toLowerCase();
+  const wantsParking = parkingRaw === 'yes';
+  const plan = wantsParking
+    ? (_normalizeParkingToken_(params.parking_plan) || _normalizeParkingToken_(parkingRaw))
+    : '';
+  const cell = _parkingCellValue_(plan, wantsParking);
+  const label = _parkingLineLabel_(plan, wantsParking);
+  return { wantsParking, plan, cell, label };
+}
+
+function _parseParkingCellValue_(rawCell) {
+  const lower = String(rawCell || '').trim().toLowerCase();
+  if (!lower) return { wantsParking: false, plan: '', cell: 'No' };
+  if (PARKING_NO_TOKENS.includes(lower)) return { wantsParking: false, plan: '', cell: 'No' };
+
+  const plan = _normalizeParkingToken_(lower);
+  if (plan) return { wantsParking: true, plan, cell: _parkingCellValue_(plan, true) };
+
+  if (lower === 'yes') return { wantsParking: true, plan: 'roofed', cell: 'Roofed' };
+  if (lower === 'yes 500' || lower === 'yes (500)' || lower === 'yes500') {
+    return { wantsParking: true, plan: 'open', cell: 'Open' };
+  }
+
+  return { wantsParking: false, plan: '', cell: 'No' };
+}
+
+function _parkingCellHasUsage_(rawCell) {
+  return _parseParkingCellValue_(rawCell).wantsParking;
+}
+
+function _parkingActiveStatuses_() {
+  return [
+    'pending confirm',
+    'awaiting payment',
+    'slip received',
+    'paid',
+    'จ่ายแล้ว'
+  ];
+}
+
+function _normalizeAssetRoofType_(raw) {
+  const token = _normalizeParkingToken_(raw);
+  if (token === 'roofed' || token === 'open') return token;
+  const txt = String(raw || '').trim().toLowerCase();
+  if (['roofed', 'covered'].includes(txt)) return 'roofed';
+  if (['open', 'open air', 'open-air', 'outdoor', 'no roof', 'noroof'].includes(txt)) return 'open';
+  return '';
+}
+
+function _assignAssetParkingSlot_(parkingPlan, info) {
+  const plan = _normalizeAssetRoofType_(parkingPlan);
+  if (!plan || !ASSET_SHEET_ID || !ASSET_CAR_SHEET) return false;
+  info = info || {};
+
+  try {
+    const ss = SpreadsheetApp.openById(ASSET_SHEET_ID);
+    const sh = ss ? ss.getSheetByName(ASSET_CAR_SHEET) : null;
+    if (!sh) return false;
+
+    const headers = _headersRow_(sh);
+    const cRoof   = _findCol_(headers, ['roof', 'type']);
+    const cStatus = _findCol_(headers, ['status', 'สถานะ']);
+    const cRoomId = _findCol_(headers, ['roomid', 'room id', 'room']);
+    const cTenant = _findCol_(headers, ['tenantname', 'tenant name', 'tenant', 'name']);
+    const cLineId = _findCol_(headers, ['lineuserid', 'line user id', 'line id', 'lineid']);
+    const cTel    = _findCol_(headers, ['tel', 'phone', 'โทร', 'เบอร์']);
+    if (!cRoof || !cStatus) return false;
+
+    const rowCount = Math.max(sh.getLastRow() - 1, 0);
+    if (rowCount === 0) return false;
+
+    const values = sh.getRange(2, 1, rowCount, sh.getLastColumn()).getValues();
+    let existingRow = 0;
+    let availableRow = 0;
+
+    const desiredRoom = info.roomId ? String(info.roomId || '').trim().toUpperCase() : '';
+    const desiredLine = info.userId ? String(info.userId || '').trim() : '';
+
+    for (let i = 0; i < values.length; i++) {
+      const rowNum = i + 2;
+      const roofType = _normalizeAssetRoofType_(values[i][cRoof - 1]);
+      const statusText = String(values[i][cStatus - 1] || '').trim().toLowerCase();
+
+      if (!existingRow) {
+        const rowRoom = cRoomId ? String(values[i][cRoomId - 1] || '').trim().toUpperCase() : '';
+        const rowLine = cLineId ? String(values[i][cLineId - 1] || '').trim() : '';
+        if ((desiredRoom && rowRoom && rowRoom === desiredRoom) ||
+            (desiredLine && rowLine && rowLine === desiredLine)) {
+          existingRow = rowNum;
+        }
+      }
+
+      if (!existingRow && !availableRow &&
+          roofType === plan &&
+          statusText === ASSET_SLOT_STATUS_AVAILABLE.toLowerCase()) {
+        availableRow = rowNum;
+      }
+
+      if (existingRow && availableRow) break;
+    }
+
+    const targetRow = existingRow || availableRow;
+    if (!targetRow) {
+      Logger.log(`No available ${plan} parking slots for ${info.roomId || 'unknown room'}`);
+      try {
+        sendLineMessage(`⚠️ ไม่มีที่จอด (${plan}) ว่างสำหรับ ${info.roomId || info.name || 'ลูกค้า'}`);
+      } catch (_ignore) {}
+      return false;
+    }
+
+    const setCell = (col, val) => {
+      if (!col) return;
+      sh.getRange(targetRow, col).setValue(val || '');
+    };
+
+    setCell(cStatus, ASSET_SLOT_STATUS_RESERVED);
+    setCell(cRoomId, info.roomId || '');
+    setCell(cTenant, info.name || '');
+    setCell(cLineId, info.userId || '');
+    setCell(cTel, info.phone || '');
+
+    return true;
+  } catch (err) {
+    Logger.log('_assignAssetParkingSlot_ error: ' + err);
+    try { sendLineMessage('❗Parking asset update error: ' + err); } catch (_ignore2) {}
+    return false;
+  }
+}
+
+/** Quick helper to prompt authorization for the asset sheet scopes. */
+function testAccessAssetParkingSheet() {
+  if (!ASSET_SHEET_ID || !ASSET_CAR_SHEET) {
+    throw new Error('ASSET_SHEET_ID / ASSET_CAR_SHEET not configured');
+  }
+  const ss = SpreadsheetApp.openById(ASSET_SHEET_ID);
+  if (!ss) throw new Error('Asset spreadsheet not found');
+  const sh = ss.getSheetByName(ASSET_CAR_SHEET);
+  if (!sh) throw new Error('Asset sheet not found: ' + ASSET_CAR_SHEET);
+  const headers = _headersRow_(sh);
+  Logger.log('Asset sheet OK, headers=' + JSON.stringify(headers));
+  return 'Asset sheet accessible, columns=' + headers.length;
+}
+
+function _parkingCapacities_() {
+  const cfg = (typeof PARKING_CAPACITY === 'object' && PARKING_CAPACITY) ? PARKING_CAPACITY : {};
+  const roofed = Number(cfg.roofed || 0);
+  const open = Number(cfg.open || 0);
+  return { roofed, open, total: roofed + open };
+}
+
+function _defaultParkingAvailability_() {
+  const caps = _parkingCapacities_();
+  const nowIso = new Date().toISOString();
+  return {
+    roofed: { capacity: caps.roofed, used: 0, left: caps.roofed },
+    open:   { capacity: caps.open,   used: 0, left: caps.open },
+    total:  { capacity: caps.total,  used: 0, left: caps.total },
+    ts: nowIso
+  };
+}
+
+function readParkingAvailability_() {
+  const caps = _parkingCapacities_();
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_ROOMS);
+  if (!sh) return _defaultParkingAvailability_();
+
+  const headers = _headersRow_(sh);
+  const cParking = _findCol_(headers, ['parking','ที่จอดรถ']);
+  if (!cParking) return _defaultParkingAvailability_();
+
+  const lastRow = sh.getLastRow();
+  if (lastRow <= 1) return _defaultParkingAvailability_();
+
+  const rows = sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).getValues();
+
+  let roofedUsed = 0;
+  let openUsed = 0;
+
+  rows.forEach(row => {
+    const info = _parseParkingCellValue_(row[cParking - 1]);
+    if (!info.wantsParking) return;
+
+    if (info.plan === 'open') openUsed++;
+    else roofedUsed++;
+  });
+
+  const totalUsed = roofedUsed + openUsed;
+  const nowIso = new Date().toISOString();
+
+  return {
+    roofed: {
+      capacity: caps.roofed,
+      used: roofedUsed,
+      left: Math.max(caps.roofed - roofedUsed, 0)
+    },
+    open: {
+      capacity: caps.open,
+      used: openUsed,
+      left: Math.max(caps.open - openUsed, 0)
+    },
+    total: {
+      capacity: caps.total,
+      used: totalUsed,
+      left: Math.max(caps.total - totalUsed, 0)
+    },
+    ts: nowIso
+  };
+}
+
+/************* RESERVATION FORM HANDLER *************/
+function doGet(e) {
+  const params = e.parameter || {};
+  const action = String(params.action || '').toLowerCase();
+
+  if (action === 'rooms') {
+    // Return { rooms: {A101:'avail', A102:'hold', ...}, ts: <iso> }
+    const statusMap = readRoomStatus_();
+    const out = { rooms: statusMap, ts: new Date().toISOString() };
+    return ContentService
+      .createTextOutput(JSON.stringify(out))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  if (action === 'parking') {
+    const availability = readParkingAvailability_();
+    return ContentService
+      .createTextOutput(JSON.stringify({ parking: availability }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  if (action === 'reserve') {
+    // Atomically hold the room and create a reservation row, then push to LINE
+    const roomId = String(params.room_id || '').trim();
+    if (!roomId) {
+      return ContentService.createTextOutput('ERROR: room_id required');
+    }
+
+    const parkingInfo = _parseParkingFromParams_(params);
+    const wantsParking = parkingInfo.wantsParking;
+    const parkingCell = parkingInfo.cell;
+    const parkingLabel = parkingInfo.label;
+
+    const lock = LockService.getScriptLock();
+    lock.waitLock(30 * 1000);
+
+    try {
+      // 1) read room status
+      const statusMap = readRoomStatus_();
+      const current = statusMap[roomId] || 'avail';
+      if (current !== 'avail') {
+        return ContentService.createTextOutput('ROOM_TAKEN');
+      }
+
+      // 2) flip to HOLD right away
+      const ok = setRoomStatus_(roomId, 'hold');
+      if (!ok) return ContentService.createTextOutput('ERROR: room not found');
+
+      // 3) create new booking code
+      const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
+      const lastRow = sheet.getLastRow();
+      let newCode;
+      if (lastRow <= 1) {
+        newCode = "#MM000";
+      } else {
+        const lastCode = sheet.getRange(lastRow, 1).getValue();
+        const lastNum = parseInt(String(lastCode).replace("#MM", ""), 10) || 0;
+        const nextNum = lastNum + 1;
+        newCode = "#MM" + String(nextNum).padStart(3, '0');
+      }
+
+      // 4) build row dynamically with headers
+      const headers = sheet.getRange(1,1,1,sheet.getLastColumn()).getValues()[0].map(h => String(h||'').trim());
+      let newRow = [
+        newCode,                // Code
+        new Date(),             // Timestamp
+        params.fullname || '',  // Fullname
+        params.line_id  || '',  // Line ID
+        params.phone    || '',  // Phone
+        roomId,                 // Room ID
+        params.notes    || '',   // Notes
+        parkingCell             // Parking (Roofed/Open/No)
+      ];
+
+      // Ensure row length matches header count
+      while (newRow.length < headers.length) newRow.push('');
+
+      // ถ้ามีคอลัมน์ Status ให้เติม "Pending Confirm"
+      const cStat = headers.findIndex(h => /^(status|สถานะ)$/i.test(h)) + 1;
+      if (cStat) newRow[cStat - 1] = 'Pending Confirm';
+
+      // check parking capacity for requested plan
+      if (wantsParking) {
+        const availability = readParkingAvailability_();
+        const planKey = parkingInfo.plan === 'open' ? 'open' : 'roofed';
+        const planData = availability[planKey] || { left: 0 };
+        const totalData = availability.total || { left: 0 };
+
+        if ((planData.left || 0) <= 0 || (totalData.left || 0) <= 0) {
+          return ContentService.createTextOutput('PARKING_FULL');
+        }
+      }
+
+      // Append the row
+      sheet.appendRow(newRow);
+
+      // 5) notify LINE
+      const message =
+        `📢 มีการจองห้องใหม่!\n` +
+        `🆔 รหัส: ${newCode}\n` +
+        `👤 ชื่อ: ${params.fullname || '-'}\n` +
+        `📞 โทร: ${params.phone || '-'}\n` +
+        `🏠 ห้อง: ${roomId}\n` +
+        `🚗 ที่จอดรถ: ${parkingLabel}\n` +
+        `📝 หมายเหตุ: ${params.notes || '-'}`;
+      sendLineMessage(message);
+
+      // 6) return booking code
+      return ContentService.createTextOutput(newCode);
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  if (action === 'prebook') {
+    // รับค่าจากฟอร์มจองล่วงหน้า (ไม่มีเลือกห้อง)
+    const fullname = String(params.fullname || '').trim();
+    const line_id  = String(params.line_id  || '').trim();
+    const phone    = String(params.phone    || '').trim();
+    const notes    = String(params.notes    || '').trim();
+    const parking  = (String(params.parking || '').toLowerCase() === 'yes') ? 'Yes' : 'No';
+    const move_in_month = String(params.move_in_month || '').trim(); // รูปแบบ YYYY-MM จาก <input type="month">
+
+    // เขียนลงชีต PreBook
+    const sh = _ensurePrebookSheet_();
+    const code = _nextPrebookCode_(sh);
+
+    // เตรียมแถวให้เข้ากับเฮดเดอร์
+    const row = [
+      code, new Date(),
+      fullname, line_id, phone,
+      parking, move_in_month, notes,
+      'New' // Status เริ่มต้น
+    ];
+    sh.appendRow(row);
+
+    // ส่งแจ้งเตือนเข้า LINE กลุ่มแอดมิน
+    const msg =
+      '🗓️ มีคำขอ "จองล่วงหน้า"\n' +
+      `🆔 รหัส: ${code}\n` +
+      `👤 ชื่อ: ${fullname || '-'}\n` +
+      `📞 โทร: ${phone || '-'}\n` +
+      `💬 Line ID: ${line_id || '-'}\n` +
+      `🚗 ที่จอด: ${parking}\n` +
+      `📅 เดือนเข้าอยู่: ${move_in_month || '-'}\n` +
+      `📝 หมายเหตุ: ${notes || '-'}`;
+    sendLineMessage(msg);
+
+    // ตอบกลับเป็นรหัส
+    return ContentService.createTextOutput(code);
+  }
+
+  // ---- fallback for old links (no action) ----
+  const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
+  const p = e.parameter || {};
+  const lastRow = sheet.getLastRow();
+  let newCode;
+  if (lastRow <= 1) newCode = "#MM000";
+  else {
+    const lastCode = sheet.getRange(lastRow, 1).getValue();
+    const lastNum = parseInt(String(lastCode).replace("#MM", ""), 10) || 0;
+    newCode = "#MM" + String(lastNum + 1).padStart(3, '0');
+  }
+  sheet.appendRow([newCode, new Date(), p.fullname||'', p.line_id||'', p.phone||'', p.room_id||'', p.notes||'']);
+  sendLineMessage(`📢 มีการจองห้องใหม่!\n🆔 รหัส: ${newCode}\n👤 ชื่อ: ${p.fullname || '-'}\n📞 โทร: ${p.phone || '-'}\n🏠 ห้อง: ${p.room_id || '-'}\n📝 หมายเหตุ: ${p.notes || '-'}`);
+  return ContentService.createTextOutput(newCode);
+}
+
+function doPost(e) {
+  const secret = PropertiesService.getScriptProperties().getProperty('WORKER_SECRET') || '';
+  const bodyText = (e && e.postData && e.postData.contents) ? e.postData.contents : '{}';
+  let body = {};
+  try { body = JSON.parse(bodyText || '{}'); }
+  catch (_err) { body = {}; }
+
+  const providedSecret = String(body.workerSecret || body.worker_secret || '').trim();
+  if (!secret || providedSecret !== secret) {
+    return _jsonResponse_({ ok: false, error: 'unauthorized' });
+  }
+
+  let handledEvents = false;
+  if (Array.isArray(body.events) && body.events.length) {
+    try {
+      handledEvents = handleForwardedEvents_(body.events) || false;
+    } catch (err) {
+      Logger.log('handleForwardedEvents_ error: ' + err);
+    }
+  }
+
+  const act = String(body.act || '').trim();
+  if (!act && handledEvents) {
+    return _jsonResponse_({ ok: true, handledEvents: true });
+  }
+
+  if (act === 'lookup_room_by_line') {
+    const lineUserId = String(body.lineUserId || body.line_user_id || '').trim();
+    if (!lineUserId) {
+      return _jsonResponse_({ ok: false, error: 'missing_line_user' });
+    }
+    const roomId = _findRoomByUserId_(lineUserId);
+    if (!roomId) {
+      return _jsonResponse_({ ok: false, error: 'room_not_found' });
+    }
+    return _jsonResponse_({ ok: true, roomId });
+  }
+
+  if (act === 'fridge_rent') {
+    const userId =
+      String(body.lineUserId || body.line_user_id || '').trim() ||
+      String(body.userId || '').trim() ||
+      String(body.events && body.events[0] && body.events[0].source && body.events[0].source.userId || '').trim();
+
+    const roomId =
+      String(body.roomId || body.room || '').trim() ||
+      (userId ? _findRoomByUserId_(userId) : '');
+
+    const comment = String(body.text || body.message || '').trim();
+    const via = String(body.via || '').trim() || 'LINE chatbot';
+
+    const lines = [
+      '🧊 คำขอเช่าตู้เย็นใหม่',
+      `• แหล่งที่มา: ${via}`,
+      `• Room: ${roomId || '(ยังไม่ทราบ)'}`,
+      userId ? `• LINE UserID: ${userId}` : null,
+      comment ? `• ข้อความ: ${comment}` : null
+    ].filter(Boolean);
+
+    try { sendLineMessage(lines.join('\n')); }
+    catch (err) { Logger.log('sendLineMessage fridge_rent error: ' + err); }
+
+    return _jsonResponse_({ ok: true, roomId: roomId || null });
+  }
+
+  return _jsonResponse_({ ok: false, error: 'unknown_act' });
+}
+
+function _jsonResponse_(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj || {}))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function _parsePostbackData_(raw) {
+  const input = String(raw || '').trim();
+  if (!input) return {};
+
+  if (input.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(input);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch (err) {
+      Logger.log('parsePostbackData json error: ' + err);
+    }
+  }
+
+  const out = {};
+  input.split('&').forEach((fragment) => {
+    if (!fragment) return;
+    const [keyRaw, valRaw = ''] = fragment.split('=');
+    const key = decodeURIComponent(String(keyRaw || '')).trim();
+    const val = decodeURIComponent(String(valRaw || '')).trim();
+    if (!key) return;
+    if (Object.prototype.hasOwnProperty.call(out, key)) {
+      const prev = out[key];
+      out[key] = Array.isArray(prev) ? prev.concat(val) : [prev, val];
+    } else {
+      out[key] = val;
+    }
+  });
+  return out;
+}
+
+function _buildPostbackData_(obj) {
+  if (!obj || typeof obj !== 'object') return '';
+  return Object.keys(obj)
+    .filter(key => Object.prototype.hasOwnProperty.call(obj, key))
+    .map(key => {
+      const value = obj[key];
+      if (value === undefined || value === null || value === '') return null;
+      return encodeURIComponent(key) + '=' + encodeURIComponent(String(value));
+    })
+    .filter(Boolean)
+    .join('&');
+}
+
+function _lineDatetimeFromParams_(params) {
+  if (!params || typeof params !== 'object') return '';
+  if (params.datetime) return String(params.datetime);
+  if (params.date && params.time) return `${params.date}T${params.time}`;
+  return '';
+}
+
+function _clockMinutesFromLineDatetime_(raw) {
+  const str = String(raw || '').trim();
+  if (!str) return NaN;
+  const timePart = str.split('T')[1] || str;
+  const match = timePart.match(/^(\d{2}):(\d{2})/);
+  if (!match) return NaN;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return NaN;
+  return hours * 60 + minutes;
+}
+
+function _parseLineDatetimeValue_(raw) {
+  const str = String(raw || '').trim();
+  if (!str) return null;
+  const hasSeconds = /:\d{2}(?:[+-]|Z)/.test(str);
+  const hasOffset = /[+-]\d{2}:?\d{2}$|Z$/i.test(str);
+  let iso = str;
+  if (!hasSeconds) iso += ':00';
+  if (!hasOffset) iso += CHECKIN_PICKER_TZ_OFFSET;
+  const parsed = new Date(iso);
+  return isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function handleForwardedEvents_(events) {
+  if (!Array.isArray(events) || !events.length) return false;
+  let handled = false;
+  for (let i = 0; i < events.length; i += 1) {
+    try {
+      if (handleBookingCodeEvent_(events[i]) ||
+          handleBookingPostback_(events[i]) ||
+          handleCheckinPickerPostback_(events[i]) ||
+          handleCheckinPickerTextCommand_(events[i])) {
+        handled = true;
+      }
+    } catch (err) {
+      Logger.log('handleForwardedEvents_/item error: ' + err);
+    }
+  }
+  return handled;
+}
+
+function handleBookingCodeEvent_(event) {
+  if (!event || String(event.type || '').toLowerCase() !== 'message') return false;
+  const message = event.message || {};
+  if (String(message.type || '').toLowerCase() !== 'text') return false;
+
+  const rawText = String(message.text || '').trim();
+  if (!rawText) return false;
+
+  const match = rawText.match(/^#?\s*(MM\d{3,})\s*$/i);
+  if (!match) return false;
+
+  const bookingCode = '#' + match[1].toUpperCase();
+  const targetId =
+    (event.source && (event.source.groupId || event.source.roomId || event.source.userId)) || '';
+
+  const info = _lookupReservationByCode_(bookingCode);
+  let messages;
+  if (info && _shouldShowBookingConfirmCard_(info)) {
+    messages = [_buildBookingConfirmTemplate_(info)];
+  } else if (info) {
+    messages = [{ type: 'text', text: _formatReservationSummary_(info) }];
+  } else {
+    const notFound = `ไม่พบข้อมูลรหัส ${bookingCode}\nโปรดตรวจสอบว่าพิมพ์ถูกต้อง หรือทักห้องแอดมินเพื่อให้ช่วยตรวจสอบอีกครั้งค่ะ 🙏`;
+    messages = [{ type: 'text', text: notFound }];
+  }
+
+  if (targetId && messages && messages.length) {
+    pushLineMessages_(targetId, messages);
+  } else if (!targetId) {
+    Logger.log('handleBookingCodeEvent_: missing targetId for ' + bookingCode);
+  }
+
+  return true;
+}
+
+function handleBookingPostback_(event) {
+  if (!event || String(event.type || '').toLowerCase() !== 'postback') return false;
+  const payload = event.postback || {};
+  const data = _parsePostbackData_(payload.data || '');
+  const act = String(data.act || '').trim().toLowerCase();
+  if (act !== 'booking_confirm') return false;
+
+  const codeRaw = String(data.code || data.bookingCode || '').trim().toUpperCase();
+  if (!codeRaw) return false;
+  const bookingCode = codeRaw.startsWith('#') ? codeRaw : `#${codeRaw}`;
+
+  const record = _lookupReservationByCode_(bookingCode);
+  const targetId =
+    (event.source && (event.source.groupId || event.source.roomId || event.source.userId)) || '';
+
+  if (!record) {
+    if (targetId) {
+      pushLineMessages_(targetId, [{
+        type: 'text',
+        text: `ไม่พบข้อมูลรหัส ${bookingCode}\nโปรดตรวจสอบอีกครั้ง หรือพิมพ์รหัสใหม่ค่ะ 🙏`
+      }]);
+    }
+    return true;
+  }
+
+  _markReservationAwaitingPayment_(record);
+  record.status = 'Awaiting Payment';
+
+  if (targetId) {
+    pushLineMessages_(targetId, _bookingConfirmationMessages_(record));
+  }
+  return true;
+}
+
+function handleCheckinPickerPostback_(event) {
+  if (!event || String(event.type || '').toLowerCase() !== 'postback') return false;
+  const payload = event.postback || {};
+  const data = _parsePostbackData_(payload.data || '');
+  if (String(data.act || '').trim().toLowerCase() !== 'checkin_pick') return false;
+
+  const params = payload.params || {};
+  const datetimeRaw = _lineDatetimeFromParams_(params);
+  const userId = (event.source && event.source.userId) || '';
+  const roomId = String(data.room || '').trim() || (userId ? _findRoomByUserId_(userId) : '');
+  const pickerMax = CHECKIN_PICKER_MAX_DATETIME ? _parseLineDatetimeValue_(CHECKIN_PICKER_MAX_DATETIME) : null;
+
+  if (!datetimeRaw) {
+    if (userId) {
+      pushLineMessages_(userId, [{
+        type: 'text',
+        text: 'ระบบไม่พบวัน–เวลาเช็คอินที่เลือก กรุณากดเลือกใหม่อีกครั้งค่ะ 🙏'
+      }]);
+      if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
+    }
+    return true;
+  }
+
+  const clockMinutes = _clockMinutesFromLineDatetime_(datetimeRaw);
+  const chosenTimeText = (datetimeRaw.split('T')[1] || '').slice(0, 5);
+  if (!Number.isFinite(clockMinutes)) {
+    if (userId) {
+      pushLineMessages_(userId, [{
+        type: 'text',
+        text: 'รูปแบบเวลาไม่ถูกต้อง กรุณาเลือกใหม่อีกครั้งค่ะ 🙏'
+      }]);
+      if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
+    }
+    return true;
+  }
+
+  if (clockMinutes < CHECKIN_PICKER_EARLIEST_MINUTES) {
+    if (userId) {
+      const msg =
+        `เวลาที่เลือก (${chosenTimeText || 'ไม่ระบุ'}) ก่อน ${CHECKIN_PICKER_EARLIEST_TIME_LABEL} น.\n` +
+        `กรุณาเลือกช่วง ${CHECKIN_PICKER_EARLIEST_TIME_LABEL}-${CHECKIN_PICKER_LATEST_TIME_LABEL} น. เท่านั้นค่ะ 🙏`;
+      pushLineMessages_(userId, [{ type: 'text', text: msg }]);
+      if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
+    }
+    return true;
+  }
+
+  if (clockMinutes > CHECKIN_PICKER_LATEST_MINUTES) {
+    if (userId) {
+      const msg =
+        `เวลาที่เลือก (${chosenTimeText || 'ไม่ระบุ'}) หลัง ${CHECKIN_PICKER_LATEST_TIME_LABEL} น.\n` +
+        `กรุณาเลือกช่วง ${CHECKIN_PICKER_EARLIEST_TIME_LABEL}-${CHECKIN_PICKER_LATEST_TIME_LABEL} น. เท่านั้นค่ะ 🙏`;
+      pushLineMessages_(userId, [{ type: 'text', text: msg }]);
+      if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
+    }
+    return true;
+  }
+
+  const selected = _parseLineDatetimeValue_(datetimeRaw);
+  if (!selected) {
+    if (userId) {
+      pushLineMessages_(userId, [{
+        type: 'text',
+        text: 'ไม่สามารถอ่านค่าวันที่/เวลาได้ กรุณาเลือกใหม่ค่ะ 🙏'
+      }]);
+      if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
+    }
+    return true;
+  }
+
+  if (pickerMax && selected.getTime() > pickerMax.getTime()) {
+    if (userId) {
+      pushLineMessages_(userId, [{
+        type: 'text',
+        text: 'วันเช็คอินที่เลือกเกินช่วงที่กำหนดไว้ กรุณาเลือกวันก่อน 15 ม.ค. 2026 ค่ะ 🙏'
+      }]);
+      if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
+    }
+    return true;
+  }
+
+  if (!roomId) {
+    if (userId) {
+      pushLineMessages_(userId, [{
+        type: 'text',
+        text: 'ระบบไม่พบห้องที่เชื่อมกับบัญชี LINE นี้ กรุณาติดต่อแอดมินเพื่อให้ช่วยบันทึกวันเช็คอินค่ะ 🙏'
+      }]);
+    }
+    return true;
+  }
+
+  const dateOnly = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate());
+  const timeText = Utilities.formatDate(selected, CHECKIN_PICKER_TIMEZONE, 'HH:mm');
+  const saved = _updateRoomCheckinSelection_(roomId, { dateOnly, timeText });
+
+  if (!saved) {
+    if (userId) {
+      pushLineMessages_(userId, [{
+        type: 'text',
+        text: 'ระบบบันทึกวันเช็คอินไม่สำเร็จ กรุณาติดต่อแอดมินเพื่อให้ช่วยตรวจสอบค่ะ 🙏'
+      }]);
+    }
+    Logger.log('Check-in picker: failed to write to sheet for room ' + roomId);
+    return true;
+  }
+
+  const thaiDate = _thaiDate_(dateOnly);
+  const ackLines = [
+    `บันทึกวันเช็คอินของห้อง ${roomId} แล้วค่ะ 🙏`,
+    `🗓️ ${thaiDate} เวลา ${timeText} น.`,
+    'หากต้องการปรับเปลี่ยน สามารถกดเลือกใหม่จากปุ่มเดิมได้เลยค่ะ'
+  ];
+  if (userId) pushLineMessages_(userId, [{ type: 'text', text: ackLines.join('\n') }]);
+
+  Logger.log(`Check-in picker saved for ${roomId}: ${thaiDate} ${timeText}`);
+  return true;
+}
+
+function handleCheckinPickerTextCommand_(event) {
+  if (!event || String(event.type || '').toLowerCase() !== 'message') return false;
+  const message = event.message || {};
+  if (String(message.type || '').toLowerCase() !== 'text') return false;
+
+  const rawText = String(message.text || '').trim();
+  if (!rawText) return false;
+
+  const collapsed = rawText
+    .toLowerCase()
+    .replace(/\s+/g, ''); // ignore spacing differences
+  const matched = CHECKIN_PICKER_COMMAND_KEYWORDS.some(keyword => collapsed.includes(keyword));
+  if (!matched) return false;
+
+  const source = event.source || {};
+  const userId = String(source.userId || '').trim();
+  const replyTargetId = String(source.userId || source.groupId || source.roomId || '').trim();
+
+  if (!replyTargetId) return false;
+
+  if (!userId) {
+    pushLineMessages_(replyTargetId, [{
+      type: 'text',
+      text: 'ระบบต้องการข้อมูลบัญชี LINE เพื่อส่งปุ่มเลือกวันเช็คอิน กรุณาเริ่มแชตกับบอทในห้องส่วนตัวก่อนนะคะ 🙏'
+    }]);
+    return true;
+  }
+
+  const roomId = _findRoomByUserId_(userId);
+  if (!roomId) {
+    pushLineMessages_(replyTargetId, [{
+      type: 'text',
+      text: 'ระบบไม่พบห้องที่เชื่อมกับบัญชี LINE นี้ กรุณาติดต่อแอดมินเพื่อให้ช่วยตรวจสอบนะคะ 🙏'
+    }]);
+    return true;
+  }
+
+  pushLineMessages_(replyTargetId, [{
+    type: 'text',
+    text: `ส่งปุ่มเลือกวัน–เวลาเช็คอินของห้อง ${roomId} ให้แล้วค่ะ 🙏\nกดเลือกจากปุ่มล่าสุดได้เลย`
+  }]);
+  sendCheckinPickerToUser(userId, roomId);
+  return true;
+}
+
+function _updateRoomCheckinSelection_(roomId, selection) {
+  if (!roomId || !selection) return false;
+  const { sh, H, Hl } = _roomsHeaders_();
+  const cRoom = Hl.findIndex(h => h.includes('room')) + 1;
+  if (!cRoom) return false;
+  const cDate = H.indexOf('CheckinDate') + 1;
+  const cTime = H.indexOf('CheckinTime') + 1;
+  const cConf = H.indexOf('CheckinConfirmed') + 1;
+  if (!cDate && !cTime && !cConf) return false;
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return false;
+
+  const rooms = sh.getRange(2, cRoom, lastRow - 1, 1).getValues();
+  const target = String(roomId).trim().toUpperCase();
+  for (let i = 0; i < rooms.length; i++) {
+    const id = String(rooms[i][0] || '').trim().toUpperCase();
+    if (!id || id !== target) continue;
+    const row = i + 2;
+    if (cDate) sh.getRange(row, cDate).setValue(selection.dateOnly);
+    if (cTime) sh.getRange(row, cTime).setValue(selection.timeText);
+    if (cConf) sh.getRange(row, cConf).setValue(true);
+    return true;
+  }
+  return false;
+}
+
+function _lookupReservationByCode_(code) {
+  const normalized = String(code || '').trim().toUpperCase();
+  if (!normalized) return null;
+
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ss.getSheetByName(SHEET_NAME);
+  if (!sh) return null;
+
+  const headers = _headersRow_(sh);
+  const cCode = headers.findIndex(h => /^code$/i.test(h)) + 1 || 1;
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return null;
+
+  const values = sh.getRange(2, 1, lastRow - 1, sh.getLastColumn()).getValues();
+  for (let i = 0; i < values.length; i += 1) {
+    const row = values[i];
+    const rowCode = String(row[cCode - 1] || '').trim().toUpperCase();
+    if (rowCode === normalized) {
+      return _extractReservationRecord_(headers, row, i + 2);
+    }
+  }
+  return null;
+}
+
+function _extractReservationRecord_(headers, row, rowNumber) {
+  const pick = (idx) => (idx ? row[idx - 1] : '');
+
+  const cCode     = headers.findIndex(h => /^code$/i.test(h)) + 1 || 1;
+  const cStatus   = _findCol_(headers, ['status', 'สถานะ']);
+  const cRoom     = _findCol_(headers, ['room', 'room id', 'ห้อง']);
+  const cName     = _findCol_(headers, ['fullname', 'ชื่อ', 'ชื่อ-สกุล']);
+  const cPhone    = _findCol_(headers, ['phone', 'โทร']);
+  const cParking  = _findCol_(headers, ['parking', 'ที่จอดรถ']);
+  const cNotes    = _findCol_(headers, ['notes', 'หมายเหตุ']);
+  const cTs       = _findCol_(headers, ['timestamp', 'time', 'วันที่', 'เวลา']) || 2;
+  const cExpected = _findCol_(headers, ['expected amount', 'ยอดที่ต้องชำระ', 'amount']);
+  const cPaid     = _findCol_(headers, ['paid amount', 'ยอดที่ชำระแล้ว']);
+  const cSlipAt   = _findCol_(headers, ['slip received at', 'รับสลิปเมื่อ']);
+  const cPaidAt   = _findCol_(headers, ['verified at', 'ยืนยันเมื่อ', 'ตรวจสอบเมื่อ']);
+
+  return {
+    row: rowNumber,
+    code: String(pick(cCode) || '').trim(),
+    status: String(pick(cStatus) || '').trim(),
+    room: String(pick(cRoom) || '').trim(),
+    name: String(pick(cName) || '').trim(),
+    phone: String(pick(cPhone) || '').trim(),
+    timestamp: pick(cTs) || null,
+    parking: String(pick(cParking) || '').trim(),
+    notes: String(pick(cNotes) || '').trim(),
+    expectedAmount: _toNumber_(pick(cExpected)),
+    paidAmount: _toNumber_(pick(cPaid)),
+    slipAt: pick(cSlipAt) || null,
+    paidAt: pick(cPaidAt) || null,
+  };
+}
+
+function _formatReservationSummary_(rec) {
+  const parts = [];
+  parts.push(`📋 รายละเอียดรหัส ${rec.code || '-'}`);
+  if (rec.status) parts.push(`สถานะ: ${rec.status}`);
+  if (rec.room) parts.push(`ห้อง: ${rec.room}`);
+  if (rec.name) parts.push(`ชื่อผู้จอง: ${rec.name}`);
+  if (rec.phone) parts.push(`โทร: ${rec.phone}`);
+
+  const ts = _formatDateTime_(rec.timestamp);
+  if (ts) parts.push(`จองเมื่อ: ${ts}`);
+
+  if (rec.parking) parts.push(`ที่จอดรถ: ${rec.parking}`);
+
+  if (rec.expectedAmount) {
+    parts.push(`ยอดที่ต้องชำระ: ${_fmtBaht_(rec.expectedAmount)} บ.`);
+  }
+  if (rec.paidAmount) {
+    parts.push(`ยอดที่ชำระแล้ว: ${_fmtBaht_(rec.paidAmount)} บ.`);
+  }
+  const outstanding = Math.max((rec.expectedAmount || 0) - (rec.paidAmount || 0), 0);
+  if (outstanding > 0) {
+    parts.push(`ยอดคงเหลือ: ${_fmtBaht_(outstanding)} บ.`);
+  }
+
+  const slip = _formatDateTime_(rec.slipAt);
+  if (slip) parts.push(`รับสลิปเมื่อ: ${slip}`);
+  const verified = _formatDateTime_(rec.paidAt);
+  if (verified) parts.push(`ยืนยันยอดเมื่อ: ${verified}`);
+
+  if (rec.notes) parts.push(`หมายเหตุ: ${rec.notes}`);
+
+  parts.push('');
+  parts.push('พิมพ์ "ชำระค่าเช่า" เพื่อเริ่มส่งสลิป หรือทักแอดมินได้ตลอดเวลาค่ะ 🙏');
+  return parts.filter(Boolean).join('\n');
+}
+
+function _shouldShowBookingConfirmCard_(rec) {
+  if (!rec) return false;
+  const status = String(rec.status || '').trim().toLowerCase();
+  return !status || status === 'pending confirm';
+}
+
+function _buildBookingConfirmTemplate_(rec) {
+  const lines = [
+    rec.code ? `รหัส: ${rec.code}` : null,
+    rec.room ? `ห้อง: ${rec.room}` : null,
+    rec.name ? `ชื่อ: ${rec.name}` : null
+  ].filter(Boolean).join('\n') || 'ยืนยันการจองห้องนี้หรือไม่?';
+
+  let dataString = '{}';
+  try {
+    dataString = JSON.stringify({ act: 'booking_confirm', code: rec.code || '' });
+  } catch (err) {
+    Logger.log('buildBookingConfirmTemplate stringify error: ' + err);
+  }
+
+  return {
+    type: 'template',
+    altText: `ยืนยันการจอง ${rec.code || ''}`,
+    template: {
+      type: 'confirm',
+      text: lines,
+      actions: [
+        {
+          type: 'postback',
+          label: 'ยืนยัน',
+          data: dataString,
+          displayText: rec.code ? `ยืนยันรหัส ${rec.code}` : 'ยืนยันการจอง'
+        },
+        {
+          type: 'message',
+          label: 'ติดต่อแอดมิน',
+          text: 'ติดต่อแอดมิน'
+        }
+      ]
+    }
+  };
+}
+
+function _bookingConfirmationMessages_(rec) {
+  const primary = [
+    '✅ ยืนยันการจองเรียบร้อย',
+    rec.code ? `รหัส: ${rec.code}` : null,
+    rec.room ? `ห้อง: ${rec.room}` : null,
+    rec.name ? `ชื่อ: ${rec.name}` : null,
+    '',
+    'กรุณาชำระค่าจอง 2,000 บาทภายใน 24 ชม.',
+    'หลังชำระ โปรดส่งสลิปโอน + ภาพบัตรประชาชนของผู้ทำสัญญาเช่าที่แชทนี้เพื่อให้ทีมงานตรวจสอบค่ะ 🙏'
+  ].filter(Boolean).join('\n');
+
+  const followUp = 'หากต้องการเปลี่ยนห้องหรือมีคำถามเพิ่มเติม พิมพ์ "ติดต่อแอดมิน" ได้เลยค่ะ';
+
+  return [
+    { type: 'text', text: primary },
+    { type: 'text', text: followUp }
+  ];
+}
+
+function _markReservationAwaitingPayment_(rec) {
+  if (!rec || !rec.row) return;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5 * 1000);
+  try {
+    const ss = SpreadsheetApp.openById(SHEET_ID);
+    const sh = ss.getSheetByName(SHEET_NAME);
+    if (!sh) return;
+
+    const headers = _headersRow_(sh);
+    const cStatus = _findCol_(headers, ['status', 'สถานะ']);
+    const cConfAt = _findCol_(headers, ['confirmed at', 'ยืนยันเมื่อ']);
+
+    if (cStatus) {
+      sh.getRange(rec.row, cStatus).setValue('Awaiting Payment');
+    }
+    if (cConfAt) {
+      sh.getRange(rec.row, cConfAt).setValue(new Date());
+    }
+  } catch (err) {
+    Logger.log('markReservationAwaitingPayment error: ' + err);
+  } finally {
+    try { lock.releaseLock(); } catch (_e) {}
+  }
+}
+
+function _formatDateTime_(value) {
+  const d = _asDate_(value);
+  if (!d) return '';
+  const tz = Session.getScriptTimeZone() || 'Asia/Bangkok';
+  return Utilities.formatDate(d, tz, 'dd/MM/yyyy HH:mm');
+}
+
+function _asDate_(value) {
+  if (value instanceof Date) return value;
+  if (value == null || value === '') return null;
+  const parsed = Date.parse(value);
+  if (isNaN(parsed)) return null;
+  return new Date(parsed);
+}
+
+function _toNumber_(value) {
+  if (typeof value === 'number') return value;
+  if (value == null || value === '') return 0;
+  const numeric = Number(String(value).replace(/[^\d.-]/g, ''));
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+/************* LINE SENDERS *************/
+function testSendLine() {
+  const ADMIN_GROUP_ID = "Cdf017804cb8d6f4a8e02c831d700e4b5";
+  const url = "https://api.line.me/v2/bot/message/push";
+  const payload = {
+    to: ADMIN_GROUP_ID,
+    messages: [{ type: "text", text: "🔔 ทดสอบส่งข้อความจาก Google Apps Script" }]
+  };
+  const options = {
+    method: "post",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + LINE_TOKEN },
+    payload: JSON.stringify(payload)
+  };
+  try {
+    const res = UrlFetchApp.fetch(url, options);
+    Logger.log("Response: " + res.getContentText());
+  } catch (err) {
+    Logger.log("Error sending to LINE: " + err);
+  }
+}
+
+function sendLineMessage(msg) {
+  const ADMIN_GROUP_ID = "Cdf017804cb8d6f4a8e02c831d700e4b5";
+  const url = "https://api.line.me/v2/bot/message/push";
+  const payload = {
+    to: ADMIN_GROUP_ID,
+    messages: [{ type: "text", text: msg }]
+  };
+  const options = {
+    method: "post",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + LINE_TOKEN },
+    payload: JSON.stringify(payload)
+  };
+  try {
+    const res = UrlFetchApp.fetch(url, options);
+    Logger.log("Response: " + res.getContentText());
+  } catch (err) {
+    Logger.log("Error sending to LINE: " + err);
+  }
+}
+
+function pushLineMessages_(targetId, messages) {
+  if (!targetId) return false;
+  const list = Array.isArray(messages) ? messages.slice() : [];
+  if (!list.length) return false;
+
+  const normalized = list
+    .map(item => {
+      if (!item) return null;
+      if (typeof item === 'string') return { type: 'text', text: item };
+      if (!item.type) return { type: 'text', text: String(item.text || '') };
+      return item;
+    })
+    .filter(Boolean);
+
+  if (!normalized.length) return false;
+
+  const url = "https://api.line.me/v2/bot/message/push";
+  const payload = { to: targetId, messages: normalized };
+  const options = {
+    method: "post",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + LINE_TOKEN },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  };
+
+  try {
+    UrlFetchApp.fetch(url, options);
+    return true;
+  } catch (err) {
+    Logger.log('pushLineMessages_ error: ' + err);
+    return false;
+  }
+}
+
+// Push to a specific LINE userId
+function pushLineToUser_(userId, text) {
+  if (!userId || !text) return;
+  pushLineMessages_(userId, [{ type: 'text', text }]);
+}
+
+
+
+// ----- Rooms header finder -----
+function _roomsHeader_(sh) {
+  return sh.getRange(1,1,1, sh.getLastColumn()).getValues()[0].map(h => String(h||'').trim().toLowerCase());
+}
+function _roomsFindCol_(hdr, aliases) {
+  for (let i=0;i<hdr.length;i++){
+    for (const a of aliases) if (hdr[i].indexOf(String(a).toLowerCase()) !== -1) return i+1;
+  }
+  return 0;
+}
+
+// อ่าน/เขียน "ผู้เช่าปัจจุบัน" ของห้อง
+function _getRoomCurrentOccupant_(roomId) {
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_ROOMS);
+  if (!sh || !roomId) return {row:0, userId:'', code:''};
+
+  const vals = sh.getDataRange().getValues();
+  const hdr  = vals.shift().map(h => String(h||'').trim().toLowerCase());
+
+  const cRoom  = hdr.findIndex(h => h.includes('room')) + 1;
+  const cUser  = _roomsFindCol_(hdr, ROOMS_CURRENT_USER_ALIASES);
+  const cCode  = _roomsFindCol_(hdr, ROOMS_CURRENT_CODE_ALIASES);
+
+  for (let i=0;i<vals.length;i++){
+    const id = String(vals[i][cRoom-1]||'').trim();
+    if (id.toUpperCase() === String(roomId).toUpperCase()) {
+      return {
+        row: i+2,
+        userId: cUser ? String(vals[i][cUser-1]||'').trim() : '',
+        code:   cCode ? String(vals[i][cCode-1]||'').trim() : ''
+      };
+    }
+  }
+  return {row:0, userId:'', code:''};
+}
+
+function _setRoomCurrentOccupant_(roomId, opts) {
+  // opts = { userId, code, when }
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_ROOMS);
+  if (!sh || !roomId) return;
+
+  const hdr = _roomsHeader_(sh);
+  const cRoom = hdr.findIndex(h => h.includes('room')) + 1;
+  const cUser = _roomsFindCol_(hdr, ROOMS_CURRENT_USER_ALIASES);
+  const cCode = _roomsFindCol_(hdr, ROOMS_CURRENT_CODE_ALIASES);
+  const cAt   = _roomsFindCol_(hdr, ROOMS_MENU_SYNC_AT_ALIASES);
+
+  if (!cUser || !cCode) return;
+
+  const last = sh.getLastRow();
+  const vals = sh.getRange(2,1, Math.max(0,last-1), sh.getLastColumn()).getValues();
+
+  for (let i=0;i<vals.length;i++){
+    const id = String(vals[i][cRoom-1]||'').trim();
+    if (id.toUpperCase() === String(roomId).toUpperCase()) {
+      if (opts.code   != null) sh.getRange(i+2, cCode).setValue(opts.code);
+      if (opts.userId != null) sh.getRange(i+2, cUser).setValue(opts.userId);
+      if (cAt) sh.getRange(i+2, cAt).setValue(opts.when || new Date());
+      return;
+    }
+  }
+}
+
+// แกนหลัก: ให้มี “ผู้เช่าคนเดียวต่อห้อง” (unlink คนเก่า, link คนใหม่, อัปเดต Rooms)
+function ensureExclusiveMenuForRoom_(roomId, newUserId, newCode) {
+  if (!roomId || !newUserId) return;
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(5 * 1000);      // กันชนกันถ้ามี event ซ้อน
+  try {
+    const prev = _getRoomCurrentOccupant_(roomId); // {row, userId, code}
+
+    // 1) ถ้ามีคนเก่าและไม่ใช่คนเดียวกับผู้ชำระล่าสุด → unlink
+    if (prev.userId && prev.userId !== newUserId) {
+      _unlinkMenu_(prev.userId);
+    }
+
+    // 2) ลิงก์เมนูผู้เช่าให้คนใหม่ (ไม่ต้องเช็ค GET ก่อนก็ได้)
+    _linkPaidMenu_(newUserId);
+
+    // 3) อัปเดต Rooms: current code/user = ของคนใหม่
+    _setRoomCurrentOccupant_(roomId, { userId: newUserId, code: newCode, when: new Date() });
+
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ===== Helpers: ตรวจคำว่า "จ่ายแล้ว" =====
+function _isPaidText_(txt) {
+  const t = String(txt || '').toLowerCase();
+  return ['paid','จ่ายแล้ว','verified'].some(k => t.includes(k));
+}
+
+// ===== Helpers: ดูว่าห้องนี้เป็น "ผู้เช่าปัจจุบัน" ไหม (อิงชีทรูม) =====
+function _isRoomCurrentlyOccupied_(roomId, bookingCodeOpt) {
+  if (!roomId) return false;
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_ROOMS);
+  if (!sh) return false;
+
+  const vals = sh.getDataRange().getValues();
+  const hdr  = vals.shift().map(h => String(h || '').trim().toLowerCase());
+
+  const cRoom   = hdr.findIndex(h => h.includes('room'));
+  const cStatus = hdr.findIndex(h => h.includes('status') || h.includes('สถานะ'));
+  const cMove   = hdr.findIndex(h => ROOMS_MOVEOUT_ALIASES.some(a => h.includes(a)));
+  const cCode   = hdr.findIndex(h => ROOMS_CODE_ALIASES.some(a => h.includes(a)));
+
+  for (const r of vals) {
+    const rid = String(r[cRoom] || '').trim().toUpperCase();
+    if (rid !== String(roomId).trim().toUpperCase()) continue;
+
+    // ถ้ามีโค้ดในชีทรูม ให้เช็คให้ตรง (กันผิดคน)
+    if (bookingCodeOpt && cCode > -1) {
+      const codeInRoom = String(r[cCode] || '').trim();
+      if (codeInRoom && codeInRoom !== bookingCodeOpt) return false;
+    }
+
+    const st = String(r[cStatus] || '').toLowerCase();
+    const okStatus = OCCUPIED_STATUS_KEYWORDS.some(k => st.includes(k));
+    if (!okStatus) return false;
+
+    // ถ้ามีวันย้ายออกและ "เลยวันแล้ว" => ไม่ถือว่า occupied
+    if (cMove > -1) {
+      const mov = r[cMove];
+      if (mov instanceof Date) {
+        const endOfDay = new Date(mov.getFullYear(), mov.getMonth(), mov.getDate(), 23,59,59);
+        if (endOfDay < new Date()) return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+// ===== LINE Rich Menu: ลิงก์เมนูจ่ายแล้วให้ user รายคน =====
+function _linkPaidMenu_(userId) {
+  const url = `https://api.line.me/v2/bot/user/${userId}/richmenu/${PAID_MENU_ID}`;
+  const opt = { method:'post', headers:{ Authorization:'Bearer ' + LINE_TOKEN }, muteHttpExceptions:true };
+  try { UrlFetchApp.fetch(url, opt); } catch(e){ Logger.log(e); }
+}
+
+// ===== LINE Rich Menu: ยกเลิกเมนูของรายคนนั้น (จะกลับ Default เอง) =====
+function _unlinkMenu_(userId) {
+  const url = `https://api.line.me/v2/bot/user/${userId}/richmenu`;
+  const opt = { method:'delete', headers:{ Authorization:'Bearer ' + LINE_TOKEN }, muteHttpExceptions:true };
+  try { UrlFetchApp.fetch(url, opt); } catch(e){ Logger.log(e); }
+}
+
+// ===== Convenience: unlink menu by room id (clears occupant record too) =====
+function unlinkMenuByRoom_(roomId) {
+  const room = String(roomId || '').trim();
+  if (!room) return 'Room id required';
+
+  const cur = _getRoomCurrentOccupant_(room);
+  if (!cur.userId) return 'No linked user for room ' + room;
+
+  _unlinkMenu_(cur.userId);
+  _setRoomCurrentOccupant_(room, { userId: '', code: '', when: new Date() });
+
+  return 'Unlinked menu for room ' + room;
+}
+
+// ===== Broadcast OpenChat link to tenants who are checked in =====
+function broadcastOpenChatToCheckedInTenants() {
+  const { sh, Hl } = _roomsHeaders_();
+  const cRoom = Hl.findIndex(h => h.includes('room')) + 1;
+  const cUser = _roomsFindCol_(Hl, ROOMS_CURRENT_USER_ALIASES);
+  const cStatus = Hl.findIndex(h => h.includes('status') || h.includes('สถานะ')) + 1;
+  if (!cRoom || !cUser || !cStatus) throw new Error('Rooms columns missing (room/current user/status)');
+
+  const rows = Math.max(sh.getLastRow() - 1, 0);
+  if (!rows) return 'No tenant rows';
+
+  const vals = sh.getRange(2, 1, rows, sh.getLastColumn()).getValues();
+  const sentTo = new Set();
+  let sent = 0;
+
+  vals.forEach(r => {
+    const status = String(r[cStatus - 1] || '').trim().toLowerCase();
+    if (!ROOMS_CHECKED_IN_ALIASES.some(t => status === t)) return;
+
+    const roomId = String(r[cRoom - 1] || '').trim();
+    const userId = String(r[cUser - 1] || '').trim();
+    if (!roomId || !userId || sentTo.has(userId)) return;
+
+    const buildingMatch = roomId.match(/^([A-Z]+)/i);
+    const buildingKey = buildingMatch ? buildingMatch[1].toUpperCase() : '';
+    const link = ROOM_OPENCHAT_LINKS[buildingKey];
+    if (!link) return;
+
+    pushLineToUser_(userId,
+      '🎉 ยินดีต้อนรับเข้าสู่ OpenChat สำหรับผู้เช่าอาคาร ' + buildingKey + '\n' +
+      'กดเข้าร่วมที่นี่เลย: ' + link);
+    sentTo.add(userId);
+    sent++;
+  });
+
+  const msg = 'broadcastOpenChatToCheckedInTenants: sent=' + sent;
+  Logger.log(msg);
+  return msg;
+}
+
+// ===== Broadcast Safety Rule update (text + image) =====
+function broadcastSafetyRuleUpdateToCheckedInTenants_() {
+  const { sh, Hl } = _roomsHeaders_();
+  const cRoom = Hl.findIndex(h => h.includes('room')) + 1;
+  const cUser = _roomsFindCol_(Hl, ROOMS_CURRENT_USER_ALIASES);
+  const cStatus = Hl.findIndex(h => h.includes('status') || h.includes('สถานะ')) + 1;
+  if (!cRoom || !cUser || !cStatus) throw new Error('Rooms columns missing (room/current user/status)');
+
+  const rows = Math.max(sh.getLastRow() - 1, 0);
+  if (!rows) return 'No tenant rows';
+
+  const vals = sh.getRange(2, 1, rows, sh.getLastColumn()).getValues();
+  const sentTo = new Set();
+  let sent = 0;
+
+  vals.forEach(r => {
+    const status = String(r[cStatus - 1] || '').trim().toLowerCase();
+    if (!ROOMS_CHECKED_IN_ALIASES.some(token => status === token)) return;
+
+    const userId = String(r[cUser - 1] || '').trim();
+    if (!userId || sentTo.has(userId)) return;
+
+    const messages = [{ type: 'text', text: SAFETY_RULE_UPDATE_MESSAGE }];
+    const imageUrl = SAFETY_RULE_UPDATE_IMAGE_URL || '';
+    const previewUrl = SAFETY_RULE_UPDATE_PREVIEW_URL || imageUrl;
+    if (imageUrl && previewUrl) {
+      messages.push({
+        type: 'image',
+        originalContentUrl: imageUrl,
+        previewImageUrl: previewUrl
+      });
+    }
+
+    pushLineMessages_(userId, messages);
+    sentTo.add(userId);
+    sent++;
+  });
+
+  const msg = 'broadcastSafetyRuleUpdateToCheckedInTenants_: sent=' + sent;
+  Logger.log(msg);
+  return msg;
+}
+
+// ===== Broadcast reminder to place shoes inside the cabinet =====
+function broadcastShoeCabinetReminderToCheckedInTenants() {
+  const { sh, Hl } = _roomsHeaders_();
+  const cRoom = Hl.findIndex(h => h.includes('room')) + 1;
+  const cUser = _roomsFindCol_(Hl, ROOMS_CURRENT_USER_ALIASES);
+  const cStatus = Hl.findIndex(h => h.includes('status') || h.includes('สถานะ')) + 1;
+  if (!cRoom || !cUser || !cStatus) throw new Error('Rooms columns missing (room/current user/status)');
+
+  const rows = Math.max(sh.getLastRow() - 1, 0);
+  if (!rows) return 'No tenant rows';
+
+  const vals = sh.getRange(2, 1, rows, sh.getLastColumn()).getValues();
+  const sentTo = new Set();
+  let sent = 0;
+
+  vals.forEach(r => {
+    const status = String(r[cStatus - 1] || '').trim().toLowerCase();
+    if (!ROOMS_CHECKED_IN_ALIASES.some(token => status === token)) return;
+
+    const userId = String(r[cUser - 1] || '').trim();
+    if (!userId || sentTo.has(userId)) return;
+
+    pushLineToUser_(userId, SHOE_STORAGE_BROADCAST_MESSAGE);
+    sentTo.add(userId);
+    sent++;
+  });
+
+  const msg = 'broadcastShoeCabinetReminderToCheckedInTenants: sent=' + sent;
+  Logger.log(msg);
+  return msg;
+}
+
+function listRichMenus() {
+  const res = fetchL('https://api.line.me/v2/bot/richmenu/list', { method: 'get' });
+  const code = res.getResponseCode();
+  const body = res.getContentText();
+  Logger.log('LIST -> ' + code + ' ' + body);
+  if (code < 200 || code >= 300) {
+    throw new Error('List rich menus failed: ' + code + ' ' + body);
+  }
+  return body;
+}
+
+// ===== ตัดสินใจจาก "แถวใน Sheet1" แล้วลิงก์/ยกเลิก เมนู =====
+function ensureMenuByRow_(row, statusTextNow) {
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
+  const headers = _headersRow_(sh);
+
+  const cUserId = _findUserIdCol_(headers);
+  const cRoomId = _findCol_(headers, ['room','room id','ห้อง']);
+  const cCode   = headers.findIndex(h => /^code$/i.test(h)) + 1 || 1;
+
+  const userId = cUserId ? String(sh.getRange(row, cUserId).getValue() || '').trim() : '';
+  if (!userId) return;
+
+  const roomId = cRoomId ? String(sh.getRange(row, cRoomId).getValue() || '').trim() : '';
+  const code   = String(sh.getRange(row, cCode).getValue() || '').trim();
+
+  const paid = _isPaidText_(statusTextNow);
+  const occupied = _isRoomCurrentlyOccupied_(roomId, code);
+
+  if (paid && occupied) _linkPaidMenu_(userId);
+  else _unlinkMenu_(userId);
+}
+
+function oneTimeRelinkAllCurrentOccupants() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ss.getSheetByName(SHEET_ROOMS);
+  if (!sh) throw new Error('Rooms sheet not found');
+
+  const vals = sh.getDataRange().getValues();
+  const hdr  = vals.shift().map(h => String(h||'').trim().toLowerCase());
+
+  const cRoom = hdr.findIndex(h => h.includes('room')) + 1;
+  const cUser = _roomsFindCol_(hdr, ROOMS_CURRENT_USER_ALIASES);
+  const cStat = hdr.findIndex(h => h.includes('status') || h.includes('สถานะ')) + 1;
+  const cMove = hdr.findIndex(h => ROOMS_MOVEOUT_ALIASES.some(a => h.includes(a))) + 1;
+
+  if (!cRoom || !cUser || !cStat) throw new Error('Required columns missing (room/current user/status)');
+
+  let linked = 0, skipped = 0;
+  const now = new Date();
+
+  vals.forEach((r, i) => {
+    const rowIdx = i + 2;
+    const roomId = String(r[cRoom-1]||'').trim();
+    const userId = String(r[cUser-1]||'').trim();
+    const st     = String(r[cStat-1]||'').toLowerCase();
+
+    if (!roomId || !userId) { skipped++; return; }
+
+    // occupied rule (same as your nightly)
+    let occupied = OCCUPIED_STATUS_KEYWORDS.some(a => st.includes(a));
+    if (occupied && cMove) {
+      const mov = r[cMove-1];
+      if (mov instanceof Date) {
+        const end = new Date(mov.getFullYear(), mov.getMonth(), mov.getDate(), 23,59,59);
+        if (end < new Date()) occupied = false;
+      }
+    }
+    if (!occupied) { skipped++; return; }
+
+    _linkPaidMenu_(userId);
+    // write sync time if you have the column
+    const cAt = _roomsFindCol_(hdr, ROOMS_MENU_SYNC_AT_ALIASES);
+    if (cAt) sh.getRange(rowIdx, cAt).setValue(now);
+    linked++;
+  });
+
+  const msg = `oneTimeRelinkAllCurrentOccupants(): linked=${linked}, skipped=${skipped}`;
+  Logger.log(msg);
+  return msg;
+}
+
+
+/************* HEADER ROOMS SHEET FINDER *************/
+function _headersRow_(sh) {
+  return sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(h => String(h || "").trim());
+}
+function _findCol_(headers, aliases) {
+  const lower = headers.map(h => h.toLowerCase());
+  for (let i = 0; i < lower.length; i++) {
+    for (const a of aliases) {
+      if (lower[i].indexOf(a.toLowerCase()) !== -1) return i + 1;
+    }
+  }
+  return null;
+}
+
+function _findUserIdCol_(headers) {
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i].trim().toLowerCase();
+    if (h === 'line user id') return i + 1;
+  }
+  // Add broader aliases, including "line id"
+  return _findCol_(headers, [
+    'line user id', 'line id', 'ไลน์ไอดี', 'ผู้ใช้ไลน์', 'line user'
+  ]);
+}
+
 
 function setRoomStatus_(roomId, newStatus) {
   const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Rooms');
@@ -849,1238 +1662,1595 @@ function setRoomStatus_(roomId, newStatus) {
   return false;
 }
 
-// Booking helpers
-function getBookingByCode_(codeKey) {
-  const sh = openSheet_();
+/**
+ * Auto-release unconfirmed holds after N hours (default 2h).
+ * Looks for Status empty or "Pending Confirm", no Confirmed At, Timestamp older than limit.
+ * Actions: Rooms hold->avail, Sheet1.Status="Expired", Expired At=now (if exists).
+ */
+function releaseUnconfirmedHolds(hours) {
+  hours = Number(hours) || 2;
+
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ss.getSheetByName(SHEET_NAME);
+  if (!sh) throw new Error('Sheet not found: ' + SHEET_NAME);
+
+  const headers = sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(h => String(h||'').trim());
+  const cTs      = _findCol_(headers, ['timestamp','time','วันที่','เวลา']) || 2;
+  const cRoom    = _findCol_(headers, ['room','room id','ห้อง']) || 6;
+  const cStatus  = _findCol_(headers, ['status','สถานะ']);
+  const cConfAt  = _findCol_(headers, ['confirmed at','ยืนยันเมื่อ']);
+  const cExpired = _findCol_(headers, ['expired at','หมดอายุเมื่อ']);
+
   const lastRow = sh.getLastRow();
-  const lastCol = sh.getLastColumn();
-  if (lastRow < 2) return null;
+  if (lastRow < 2) return 'No rows';
 
-  const headers = sh.getRange(1,1,1,lastCol).getValues()[0].map(h => (h || '').toString().trim());
-  const idx = {
-    code:        hdrIdx(headers, ['รหัสการจอง','code','booking']),
-    name:        hdrIdx(headers, ['ชื่อ-นามสกุล','ชื่อ','name']),
-    room:        hdrIdx(headers, ['room','room id','ห้อง']),
-    status:      hdrIdx(headers, ['status','สถานะ']),
-    confirmedAt: hdrIdx(headers, ['confirmed at','ยืนยันเมื่อ']),
-    userId:      hdrIdx(headers, ['line user id','ผู้ใช้ไลน์']),
-  };
-  if (idx.code < 0) idx.code = 0;
+  const values = sh.getRange(2,1,lastRow-1,sh.getLastColumn()).getValues();
+  const now    = new Date();
+  const limit  = hours * 3600 * 1000;
 
-  const values = sh.getRange(2,1,lastRow-1,lastCol).getValues();
+  let scanned = 0, released = 0;
+
   for (let i = 0; i < values.length; i++) {
-    const row = values[i];
-    const rowCode = (row[idx.code] || '').toString().trim().toUpperCase().replace(/^#/, '');
-    if (rowCode === codeKey) {
-      return {
-        rowIndex:    i + 2,
-        code:        rowCode,
-        name:        (row[idx.name] || '').toString().trim(),
-        roomId:      (idx.room > -1 ? (row[idx.room] || '').toString().trim() : ''),
-        status:      (idx.status > -1 ? (row[idx.status] || '').toString().trim() : ''),
-        confirmedAt: (idx.confirmedAt > -1 && (row[idx.confirmedAt] instanceof Date)) ? row[idx.confirmedAt] : null,
-        userId:      (idx.userId > -1 ? (row[idx.userId] || '').toString().trim() : '')
-      };
+    scanned++;
+    const row    = values[i];
+    const roomId = String(row[cRoom-1] || '').trim();
+    if (!roomId) continue;
+
+    const stLower = cStatus ? String(row[cStatus-1] || '').toLowerCase() : '';
+
+    // skip rows that are already confirmed/paid/cancelled/expired/slip
+    if (['awaiting payment','paid','จ่ายแล้ว','slip received','ใบเสร็จได้รับ','cancelled','ยกเลิก','expired'].includes(stLower)) {
+      continue;
+    }
+
+    // if confirmed at exists, this 2h job doesn't apply
+    if (cConfAt && (row[cConfAt-1] instanceof Date)) continue;
+
+    const ts = row[cTs-1];
+    if (!(ts instanceof Date)) continue;
+
+    if (now - ts > limit) {
+      try {
+        setRoomStatus_(roomId, 'avail');
+        if (cStatus)  sh.getRange(i+2, cStatus).setValue('Expired');
+        if (cExpired) sh.getRange(i+2, cExpired).setValue(new Date());
+        released++;
+      } catch (e) {
+        Logger.log('releaseUnconfirmedHolds: failed to release ' + roomId + ': ' + e);
+      }
     }
   }
-  return null;
+
+  const msg = `releaseUnconfirmedHolds(): scanned=${scanned}, released=${released}, threshold=${hours}h`;
+  Logger.log(msg);
+  return msg;
 }
 
-function findBookingRow(codeKey) {
-  const sh = openSheet_();
+
+/**
+ * Release rooms that have been on HOLD longer than maxHours (default 24).
+ */
+function releaseExpiredHolds(maxHours) {
+  maxHours = Number(maxHours) || 24;
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ss.getSheetByName(SHEET_NAME);
+  if (!sh) throw new Error('Sheet not found: ' + SHEET_NAME);
+
+  const header = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(h => String(h||'').trim());
+  const cTs    = _findCol_(header, ['timestamp','time','วันที่','เวลา']) || 2;
+  const cRoom  = _findCol_(header, ['room','room id','ห้อง']) || 6;
+  const cStat  = _findCol_(header, ['status','สถานะ']);
+  const cExpAt = _findCol_(header, ['expired at','หมดอายุเมื่อ']);
+
   const lastRow = sh.getLastRow();
-  const lastCol = sh.getLastColumn();
-  if (lastRow < 2) return null;
+  if (lastRow < 2) return 'No rows';
 
-  const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(h => (h || '').toString().trim());
-  const idx = {
-    code: hdrIdx(headers, ['รหัสการจอง','code','booking']),
-    name: hdrIdx(headers, ['ชื่อ-นามสกุล','ชื่อ','name']),
-    room: hdrIdx(headers, ['room','room id','ห้อง'])
-  };
-  if (idx.code < 0) idx.code = 0;
+  const rng = sh.getRange(2, 1, lastRow-1, sh.getLastColumn());
+  const values = rng.getValues();
+  const roomMap = readRoomStatus_();
 
-  const values = sh.getRange(2, 1, lastRow - 1, lastCol).getValues();
-  for (let i = 0; i < values.length; i++) {
-    const row = values[i];
-    const rowCode = (row[idx.code] || '').toString().trim().toUpperCase().replace(/^#/, '');
-    if (rowCode === codeKey) {
-      return {
-        rowIndex: i + 2,
-        code: rowCode,
-        name: (row[idx.name] || '').toString().trim(),
-        roomId: (idx.room > -1 ? (row[idx.room] || '').toString().trim() : '')
-      };
-    }
-  }
-  return null;
-}
-
-function updateRowOnConfirm(codeKey, userId) {
-  const sh = openSheet_();
-  const lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
-  if (lastRow < 2) return false;
-
-  const headers = sh.getRange(1,1,1,lastCol).getValues()[0].map(h => (h||'').toString().trim());
-  const idx = {
-    code:        hdrIdx(headers, ['รหัสการจอง','code','booking']),
-    status:      hdrIdx(headers, ['status','สถานะ']),
-    confirmedAt: hdrIdx(headers, ['confirmed at','ยืนยันเมื่อ']),
-    userId:      hdrIdx(headers, ['line user id','ผู้ใช้ไลน์'])
-  };
-  if (idx.code < 0) idx.code = 0;
-
-  const values = sh.getRange(2,1,lastRow-1,lastCol).getValues();
-  for (let r = 0; r < values.length; r++) {
-    const rowCode = (values[r][idx.code] || '').toString().trim().toUpperCase().replace(/^#/, '');
-    if (rowCode === codeKey) {
-      if (idx.status      > -1) sh.getRange(r+2, idx.status+1).setValue('Awaiting Payment');
-      if (idx.confirmedAt > -1) sh.getRange(r+2, idx.confirmedAt+1).setValue(new Date());
-      if (idx.userId      > -1) sh.getRange(r+2, idx.userId+1).setValue(userId);
-      return true;
-    }
-  }
-  return false;
-}
-
-function findAwaitingRowByUser_(userId) {
-  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
-  const lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
-  if (lastRow < 2) return null;
-
-  const headers = sh.getRange(1,1,1,lastCol).getValues()[0].map(h => String(h||'').trim());
-  const colCode   = (headers.findIndex(h => h.toLowerCase().includes('รหัสการจอง')) + 1) || 1;
-  const colStatus = headers.findIndex(h => h.toLowerCase().includes('status')) + 1;
-  const colUserId = headers.findIndex(h => h.trim().toLowerCase() === 'line user id') + 1;
-  const colRoom   = headers.findIndex(h => h.toLowerCase().includes('room')) + 1;
-
-  if (!colStatus || !colUserId) return null;
-
-  const values = sh.getRange(2,1,lastRow-1,lastCol).getValues();
-  for (let r = values.length - 1; r >= 0; r--) {
-    if (String(values[r][colUserId-1]).trim() === userId &&
-        String(values[r][colStatus-1]).trim() === 'Awaiting Payment') {
-      const codeKey = String(values[r][colCode-1]).trim().toUpperCase().replace(/^#/, '');
-      const roomId  = colRoom ? String(values[r][colRoom-1] || '').trim().toUpperCase() : '';
-      return { rowIndex: r + 2, code: codeKey, roomId };
-    }
-  }
-  return null;
-}
-
-function updateSheetOnSlipReceived_(rowNum, fileUrl) {
-  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
-  const lastCol = sh.getLastColumn();
-  const headers = sh.getRange(1,1,1,lastCol).getValues()[0].map(h => String(h||'').trim());
-  const colStatus = headers.findIndex(h => h.toLowerCase().includes('status')) + 1;
-  const colSlipAt = headers.findIndex(h => h.toLowerCase().includes('slip received at')) + 1;
-  const colLink   = headers.findIndex(h => h.toLowerCase().includes('slip link')) + 1;
-
-  if (colStatus) sh.getRange(rowNum, colStatus).setValue('Slip Received');
-  if (colSlipAt) sh.getRange(rowNum, colSlipAt).setValue(new Date());
-  if (colLink)   sh.getRange(rowNum, colLink).setValue(fileUrl);
-}
-
-function updateSheetOnIdReceived_(rowNum, fileUrl) {
-  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
-  const lastCol = sh.getLastColumn();
-  const headers = sh.getRange(1,1,1,lastCol).getValues()[0].map(h => String(h||'').trim());
-  const colIdAt = headers.findIndex(h => h.toLowerCase().includes('id received at')) + 1;
-  const colIdLn = headers.findIndex(h => h.toLowerCase().includes('id link')) + 1;
-  const colKyc  = headers.findIndex(h => h.toLowerCase().includes('kyc status')) + 1;
-
-  if (colIdAt) sh.getRange(rowNum, colIdAt).setValue(new Date());
-  if (colIdLn) sh.getRange(rowNum, colIdLn).setValue(fileUrl);
-  if (colKyc)  sh.getRange(rowNum, colKyc).setValue('id_provided'); // optional marker
-}
-
-function hdrIdx(headers, keys) {
-  const lower = headers.map(h => h.toLowerCase());
-  for (let i = 0; i < lower.length; i++) {
-    for (const k of keys) if (lower[i].indexOf(k.toLowerCase()) !== -1) return i;
-  }
-  return -1;
-}
-
-function colEq_(headers, name) {
-  const want = String(name).trim().toLowerCase();
-  return headers.findIndex(h => String(h || '').trim().toLowerCase() === want);
-}
-
-function toIso_(v) {
-  if (v instanceof Date) {
-    return Utilities.formatDate(v, 'Asia/Bangkok', 'yyyy-MM-dd');
-  }
-  const s = String(v || '').trim();
-  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
-}
-
-
-
-/*************** 6) LINE & DRIVE HELPERS ***************/
-function fetchLineContentAsBlob_(messageId) {
-  const url = `https://api-data.line.me/v2/bot/message/${messageId}/content`;
-  const res = UrlFetchApp.fetch(url, {
-    method: 'get',
-    headers: { Authorization: 'Bearer ' + CHANNEL_ACCESS_TOKEN },
-    muteHttpExceptions: true
-  });
-  if (res.getResponseCode() >= 300) {
-    throw new Error('LINE_MEDIA_FETCH ' + res.getResponseCode() + ' ' + res.getContentText());
-  }
-  return res.getBlob();
-}
-
-function saveSlipToSpecificFolder_(codeDisplay, blob, folderId) {
-  const ts  = Utilities.formatDate(new Date(), 'Asia/Bangkok', "yyyy-MM-dd'T'HH-mm-ss");
-  const safe= codeDisplay.replace('#', '');
-  const ext = blob.getContentType() === 'image/png' ? 'png' : 'jpg';
-  blob.setName(`${safe}_SLIP_${ts}.${ext}`);
-  const file = DriveApp.getFolderById(folderId).createFile(blob);
-  return file.getId();
-}
-
-function saveIdToSpecificFolder_(codeDisplay, blob, folderId) {
-  const ts  = Utilities.formatDate(new Date(), 'Asia/Bangkok', "yyyy-MM-dd'T'HH-mm-ss");
-  const safe= codeDisplay.replace('#', '');
-  const ext = blob.getContentType() === 'image/png' ? 'png' : 'jpg';
-  blob.setName(`${safe}_ID_${ts}.${ext}`);
-  const file = DriveApp.getFolderById(folderId).createFile(blob);
-  return file.getId();
-}
-
-function moveFileToFolder_(fileId, srcFolderId, destFolderId) {
-  if (!fileId || !destFolderId) throw new Error('moveFileToFolder_: missing ids');
-  if (srcFolderId === destFolderId) { Logger.log('move: src==dest, skip'); return; }
-
-  try {
-    // Preferred path (Shared Drives safe)
-    Drive.Files.update(
-      {},                              // metadata not changing
-      fileId,
-      null,                            // media
-      {
-        addParents: destFolderId,
-        removeParents: srcFolderId || '',
-        supportsAllDrives: true
-      }
-    );
-    Logger.log('move: Drive.Files.update OK file=%s to=%s (from=%s)', fileId, destFolderId, srcFolderId || '(none)');
-  } catch (e) {
-    Logger.log('move: Drive.Files.update failed: ' + e);
-    // Fallback for My Drive legacy behavior
-    try {
-      const file = DriveApp.getFileById(fileId);
-      DriveApp.getFolderById(destFolderId).addFile(file);
-      if (srcFolderId) {
-        try { DriveApp.getFolderById(srcFolderId).removeFile(file); } catch (e2) { Logger.log('move: removeFile warn: ' + e2); }
-      }
-      Logger.log('move: fallback add/remove OK for file=%s', fileId);
-    } catch (e3) {
-      Logger.log('move: fallback failed: ' + e3);
-      throw e3;
-    }
-  }
-}
-
-function parseKv(q) {
-  const out = {};
-  (q || '').split('&').forEach(p => {
-    if (!p) return;
-    const eq = p.indexOf('=');
-    if (eq === -1) { out[decodeURIComponent(p)] = ''; return; }
-    const k = decodeURIComponent(p.slice(0, eq));
-    const v = decodeURIComponent(p.slice(eq + 1));
-    out[k] = v;
-  });
-  return out;
-}
-
-function _tokensSheet_() {
-  return SpreadsheetApp.openById(SHEET_ID).getSheetByName('Tokens');
-}
-
-function issueToken_(lineId, roomId, minutes, purpose) {
-  const sh = _tokensSheet_();
-  if (!sh) throw new Error('Tokens sheet not found');
-  const tok = Utilities.getUuid().replace(/-/g,'');
+  let released = 0, examined = 0;
   const now = new Date();
-  const exp = new Date(now.getTime() + (Number(minutes) || 20)*60*1000);
-  sh.appendRow([tok, lineId || '', roomId || '', now, exp, '', purpose || 'moveout']);
-  return tok;
+  const msLimit = maxHours * 60 * 60 * 1000;
+
+  for (let i = 0; i < values.length; i++) {
+    examined++;
+    const row = values[i];
+    const ts = row[cTs-1];
+    const roomId = String(row[cRoom-1] || '').trim();
+    const curStatus = cStat ? String(row[cStat-1] || '').trim() : '';
+
+    if (!roomId || !(ts instanceof Date)) continue;
+
+    const statusLower = (curStatus || '').toLowerCase();
+    if (['paid','จ่ายแล้ว','Slip Received','expired','cancelled','ยกเลิก'].includes(statusLower)) {
+      continue;
+    }
+
+    const ageMs = now - ts;
+    if (ageMs < msLimit) continue;
+
+    if (roomMap[roomId] === 'hold') {
+      try {
+        setRoomStatus_(roomId, 'avail');
+        released++;
+        if (cStat) sh.getRange(i+2, cStat).setValue('Expired');
+        if (cExpAt) sh.getRange(i+2, cExpAt).setValue(new Date());
+      } catch (e) {
+        Logger.log('Failed to release ' + roomId + ': ' + e);
+      }
+    }
+  }
+  const msg = `releaseExpiredHolds(): examined=${examined}, released=${released}, thresholdHours=${maxHours}`;
+  Logger.log(msg);
+  return msg;
 }
 
-function findRoomByLineId_(lineId) {
+/**
+ * Single sweep: run both phases safely in one execution.
+ * - 2h unconfirmed holds (Pending Confirm)
+ * - 24h awaiting-payment holds
+ */
+function releaseHourlySweep() {
+  const lock = LockService.getScriptLock();
+  let gotLock = false;
+  try {
+    gotLock = lock.tryLock(10 * 1000); // up to 10s
+    if (!gotLock) return 'releaseHourlySweep: skipped (lock held)';
+
+    const a = releaseUnconfirmedHolds(2); // Phase A
+    const b = releaseExpiredHolds(24);    // Phase B
+
+    const msg = `releaseHourlySweep: ${a} | ${b}`;
+    Logger.log(msg);
+    return msg;
+  } catch (err) {
+    Logger.log('releaseHourlySweep ERROR: ' + err);
+    return 'releaseHourlySweep ERROR: ' + err;
+  } finally {
+    if (gotLock) lock.releaseLock();
+  }
+}
+
+
+function handleStatusEdit(e) {
+  try {
+    if (!e || !e.range) return;
+
+    const sh = e.range.getSheet();
+
+    // 1) Only this spreadsheet
+    if (sh.getParent().getId() !== SHEET_ID) return;
+
+    // 2) Only Sheet1 (your bookings sheet)
+    if (sh.getName() !== SHEET_NAME) return;
+
+    const row = e.range.getRow();
+    if (row === 1) return; // skip header
+
+    // 3) Only when editing the "Status" column
+    const headers = _headersRow_(sh);
+    const cStatus = _findCol_(headers, ["status", "สถานะ"]);
+    if (!cStatus) return;
+    if (e.range.getColumn() !== cStatus) return;
+
+    // 4) Ignore no-op changes
+    const newVal = String(e.value || "").trim().toLowerCase();
+    const oldVal = String(e.oldValue || "").trim().toLowerCase();
+    if (newVal === oldVal) return;
+
+    // Column helpers (used below)
+    const cUserId   = _findUserIdCol_(headers);
+    const cSlipAt   = _findCol_(headers, ["slip received at", "รับสลิปเมื่อ"]);
+    const cPaidAt   = _findCol_(headers, ["verified at", "ยืนยันเมื่อ", "ตรวจสอบเมื่อ"]);
+    const cRoomId   = _findCol_(headers, ["room","room id","ห้อง"]);
+    const cParking  = _findCol_(headers, ["parking","ที่จอดรถ"]); // [ADD]
+
+    const cCode     = headers.findIndex(h => /^code$/i.test(h)) + 1 || 1;
+    const cName     = _findCol_(headers, ["fullname","ชื่อ","ชื่อ-สกุล"]) || 3;
+    const cPhone    = _findCol_(headers, ["phone","โทร"]) || 5;
+    const cExpected = _findCol_(headers, ["expected amount","ยอดที่ต้องชำระ","amount"]);
+    const cPaidAmt  = _findCol_(headers, ["paid amount","ยอดที่ชำระแล้ว"]);
+    const cRef      = _findCol_(headers, ["ref","reference","เลขอ้างอิง"]);
+    const cBookingUrl = _findCol_(headers, [
+      "booking pdf url", "confirmation pdf url", "booking note url", "ลิงก์เอกสารยืนยัน"
+    ]);
+
+    // Pull common row values once
+    const userId = cUserId ? String(sh.getRange(row, cUserId).getValue() || "").trim() : "";
+    const roomId = cRoomId ? String(sh.getRange(row, cRoomId).getValue() || "").trim() : "";
+    const parkingRaw = cParking ? String(sh.getRange(row, cParking).getValue() || "").trim() : "";
+    const parkingInfoCell = _parseParkingCellValue_(parkingRaw);
+    if (cParking) {
+      const canonicalCell = parkingInfoCell.wantsParking ? parkingInfoCell.cell : 'No';
+      if (canonicalCell && canonicalCell !== parkingRaw) {
+        sh.getRange(row, cParking).setValue(canonicalCell);
+      }
+    }
+    const code   = String(sh.getRange(row, cCode).getValue() || "").trim();
+    const name   = String(sh.getRange(row, cName).getValue() || "").trim();
+    const phone  = String(sh.getRange(row, cPhone).getValue() || "").trim();
+    const expAmt = cExpected ? Number(sh.getRange(row, cExpected).getValue() || 0) : 0;
+    const paidAmt= cPaidAmt  ? Number(sh.getRange(row, cPaidAmt ).getValue() || expAmt) : expAmt;
+    const bankRef= cRef ? String(sh.getRange(row, cRef).getValue() || "").trim() : "";
+
+    // =========================
+    // A) Slip Received
+    // =========================
+    if (newVal === "slip received" || newVal === "รับสลิปแล้ว") {
+      if (cSlipAt) sh.getRange(row, cSlipAt).setValue(new Date());
+      if (userId)  pushLineToUser_(userId, "ได้รับสลิปแล้วค่ะ ทีมงานจะตรวจสอบยอดและยืนยันโดยเร็ว ขอบคุณค่ะ 🙏");
+      return;
+    }
+
+    // =========================
+    // B) Paid
+    // =========================
+    if (newVal === "paid" || newVal === "จ่ายแล้ว") {
+      // timestamp verified if empty
+      if (cPaidAt && !(sh.getRange(row, cPaidAt).getValue() instanceof Date)) {
+        sh.getRange(row, cPaidAt).setValue(new Date());
+      }
+
+      // mark room reserved in Rooms
+      if (roomId) {
+        try { 
+          setRoomStatus_(roomId, "reserved"); 
+          const parkingForRooms = parkingInfoCell.wantsParking ? parkingInfoCell.cell : '';
+          _setRoomParking_(roomId, parkingForRooms);
+        } catch (_e) {}
+      }
+
+      if (parkingInfoCell.wantsParking && parkingInfoCell.plan) {
+        _assignAssetParkingSlot_(parkingInfoCell.plan, {
+          roomId: roomId,
+          name: name,
+          userId: userId,
+          phone: phone
+        });
+      }
+
+            // [ADD] --- Remaining amount = (room price + 5,000) - paidAmt ---
+      // Try to read room price from Rooms sheet (column 'ราคาห้อง' / 'price' aliases).
+      let roomPrice = 0;
+      try {
+        const ssR = SpreadsheetApp.openById(SHEET_ID);
+        const shRooms = ssR.getSheetByName('Rooms');
+        if (shRooms && roomId) {
+          const valsR = shRooms.getDataRange().getValues();
+          const hdrR  = valsR.shift().map(h => String(h || '').trim().toLowerCase());
+
+          const iId = hdrR.findIndex(h => h.includes('room'));
+          const aliases = ['ราคาห้อง','price','room price','expected amount','amount','monthly'];
+          let iPrice = -1;
+          for (const a of aliases) {
+            const j = hdrR.findIndex(h => h.indexOf(a.toLowerCase()) !== -1);
+            if (j > -1) { iPrice = j; break; }
+          }
+
+          if (iId > -1 && iPrice > -1) {
+            for (const r of valsR) {
+              if (String(r[iId] || '').trim().toUpperCase() === String(roomId).trim().toUpperCase()) {
+                roomPrice = Number(r[iPrice] || 0) || 0;
+                break;
+              }
+            }
+          }
+        }
+      } catch (_ignore) {}
+
+      // Fallback to Expected Amount if room price not found
+      if (!roomPrice && expAmt) roomPrice = Number(expAmt) || 0;
+
+      // Formula: (roomPrice + 5,000) - paidAmt   (never below 0)
+      const remainingAmt = Math.max((roomPrice + 5000) - (paidAmt || 0), 0);
+
+      // create / fill booking PDF URL if missing
+      let pdfUrl = cBookingUrl ? String(sh.getRange(row, cBookingUrl).getValue() || "") : "";
+      if (!pdfUrl) {
+        try {
+          pdfUrl = createBookingPdf_({
+            code: code,
+            date: new Date(),
+            customer: name,
+            phone: phone,
+            line_id: userId,
+            room_id: roomId,
+            paid_amount: paidAmt || expAmt,
+            bank_ref: bankRef,
+            move_in_month: "",
+            move_in_window: "",
+            contact_phone: phone,
+            contact_line: "@MamaMansion",
+            address: "ฉลองกรุง 37 (ใกล้นิคมลาดกระบัง)",
+            remaining_amount: remainingAmt, // [CHANGE] use computed remaining
+            notes: ""
+          });
+          if (cBookingUrl) sh.getRange(row, cBookingUrl).setValue(pdfUrl);
+        } catch (err) {
+          Logger.log("PDF error: " + err);
+          sendLineMessage("❗PDF error: " + err);
+        }
+      }
+
+      // queue “Horganice tasks” on Rooms
+      if (roomId) {
+        _markRoomNeedsHorganice_(roomId, {
+          code: code, name: name, phone: phone, rowIndex: row
+        });
+      }
+
+      // notify tenant
+      if (userId) {
+        pushLineToUser_(
+          userId,
+          "ยืนยันการชำระเงินเรียบร้อย ✅\n" +
+          `รหัสการจอง: ${code}\n` +
+          `ห้อง: ${roomId}\n` +
+          (pdfUrl ? `เอกสารยืนยันการจอง & คู่มือเข้าอยู่: ${pdfUrl}\n` : "") +
+          "หมายเหตุ: เอกสารนี้ไม่ใช่ใบเสร็จหรือเอกสารภาษี ใช้เพื่อแจ้งขั้นตอนถัดไปเท่านั้น"
+        );
+
+      sendCheckinPickerToUser(userId, roomId);
+      }
+
+      // notify admin group
+      const rowLink = _rowLink_(row);
+      sendLineMessage(
+        "✅ Confirmed (manual mark = Paid)\n" +
+        `รหัส: ${code} | ห้อง: ${roomId}\n` +
+        `ผู้จอง: ${name}\n` +
+        (pdfUrl ? `เอกสารยืนยัน: ${pdfUrl}\n` : "") +
+        `แถวในชีท: ${rowLink}`
+      );
+
+      // ให้มีผู้เช่าคนเดียวต่อห้อง: unlink คนเก่า → link คนใหม่ → อัปเดต Rooms
+      ensureExclusiveMenuForRoom_(roomId, userId, code);
+
+      return;
+    }
+
+    // =========================
+    // C) Cancelled / Expired
+    // =========================
+    if (newVal === "cancelled" || newVal === "expired" || newVal === "ยกเลิก") {
+      if (roomId) {
+        try { 
+          setRoomStatus_(roomId, "avail"); 
+          _setRoomParking_(roomId, ""); // [ADD] clear parking on cancel/expire
+        } catch (_e) {}
+      }
+
+      // ถ้ามีผู้เช่าปัจจุบันใน Rooms ให้ unlink แล้วเคลียร์คนปัจจุบันออก
+      (function(){
+        const cur = _getRoomCurrentOccupant_(roomId);
+        if (cur.userId) _unlinkMenu_(cur.userId);
+        _setRoomCurrentOccupant_(roomId, { userId: '', code: '', when: new Date() });
+      })();
+
+      return;
+    }
+
+    // Otherwise ignore (we only care about specific Status values)
+    return;
+
+  } catch (err) {
+    Logger.log("handleStatusEdit error: " + err);
+    try { sendLineMessage("❗handleStatusEdit error: " + err); } catch (_e) {}
+  }
+}
+
+
+
+/** Helper: find RoomId from Rooms by Line ID (case-insensitive). */
+function _findRoomByUserId_(userId) {
   const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Rooms');
   if (!sh) return '';
-  const vals = sh.getDataRange().getValues();
-  const head = vals.shift().map(h=>String(h||'').trim().toLowerCase());
-  const cRoom = head.findIndex(h=>h.includes('room'));
-  const cUser = head.findIndex(h=>h.includes('line') && h.includes('id'));
-  if (cRoom<0 || cUser<0) return '';
-  for (const r of vals) if (String(r[cUser]||'').trim() === lineId) return String(r[cRoom]||'').trim().toUpperCase();
+  const H  = sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(h => String(h||'').trim());
+  const Hl = H.map(h => h.toLowerCase());
+  const cRoom = Hl.findIndex(h => h.includes('room')) + 1;
+  const cUser = Hl.findIndex(h => h.includes('line id')) + 1;
+  if (!cRoom || !cUser) return '';
+
+  const vals = sh.getRange(2,1,Math.max(0, sh.getLastRow()-1), sh.getLastColumn()).getValues();
+  for (let i=0;i<vals.length;i++){
+    const id = String(vals[i][cUser-1]||'').trim();
+    if (id && id.toLowerCase() === String(userId||'').trim().toLowerCase()) {
+      return String(vals[i][cRoom-1]||'').trim();
+    }
+  }
   return '';
 }
 
+/** Internal: load Rooms headers quickly */
+function _roomsHeaders_() {
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Rooms');
+  const H  = sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(h=>String(h||'').trim());
+  return { sh, H, Hl: H.map(h=>h.toLowerCase()) };
+}
 
-/*************** 7) OCR (Vision API) + THAI PARSERS ***************/
-function ocrSlipFromFileId_(fileId) {
-  const apiKey = PropertiesService.getScriptProperties().getProperty('GCV_API_KEY');
-  if (!apiKey) throw new Error('Missing GCV_API_KEY');
+/** Push picker to ONE room (for spot tests) */
+function sendCheckinPickerToRoom(roomId) {
+  const { sh, Hl } = _roomsHeaders_();
+  const cRoom = Hl.findIndex(h=>h.includes('room')) + 1;
+  const cUser = Hl.findIndex(h=>h.includes('line id')) + 1;
+  if (!cRoom || !cUser) throw new Error('Rooms: missing Room / Line ID columns');
 
-  const file = DriveApp.getFileById(fileId);
-  const blob = file.getBlob();
-  const b64  = Utilities.base64Encode(blob.getBytes());
+  const vals = sh.getRange(2,1,Math.max(0, sh.getLastRow()-1), sh.getLastColumn()).getValues();
+  for (let i=0;i<vals.length;i++){
+    const id = String(vals[i][cRoom-1]||'').trim();
+    if (id.toUpperCase() === String(roomId||'').toUpperCase()) {
+      const userId = String(vals[i][cUser-1]||'').trim();
+      if (!userId) throw new Error('This room has no LINE ID');
+      sendCheckinPickerToUser(userId, id);
+      Logger.log('Sent picker to '+id+' -> '+userId);
+      return;
+    }
+  }
+  throw new Error('Room not found: '+roomId);
+}
 
-  const url = 'https://vision.googleapis.com/v1/images:annotate?key=' + encodeURIComponent(apiKey);
+/**
+ * Push picker to ALL eligible tenants:
+ * - has LINE ID
+ * - status looks like reserved/occupied/soon
+ * - no CheckinDate yet (and not already confirmed)
+ */
+function sendCheckinPickerToEligibleTenants(limitOpt) {
+  const limit = Number(limitOpt)||9999;
+  const { sh, H, Hl } = _roomsHeaders_();
+  const cRoom  = Hl.findIndex(h => String(h).toLowerCase().includes('room')) + 1;
+  const cUser  = Hl.findIndex(h => String(h).toLowerCase().includes('line id')) + 1;
+  const cStat  = Hl.findIndex(h => {
+    const s = String(h).toLowerCase();
+    return s.includes('status') || s.includes('สถานะ');
+  }) + 1;
+  const cDate  = H.indexOf('CheckinDate') + 1;
+  const cTime  = H.indexOf('CheckinTime') + 1;
+  const cConf  = H.indexOf('CheckinConfirmed') + 1;
+
+  if (!cRoom || !cUser || !cStat) throw new Error('Rooms: missing Room/LineID/Status columns');
+
+  const rows = sh.getLastRow() - 1;
+  if (rows < 1) return 'No data rows';
+
+  const vals = sh.getRange(2,1,rows, sh.getLastColumn()).getValues();
+
+  // --- Added: LINE token fetch once
+  const token = PropertiesService.getScriptProperties().getProperty('LINE_TOKEN');
+  if (!token) throw new Error('Missing LINE_TOKEN in Script Properties');
+
+  let sent = 0, skipped = 0;
+  for (let i=0; i<vals.length; i++){
+    if (sent >= limit) break;
+
+    const roomId = String(vals[i][cRoom-1]||'').trim();
+    const userId = String(vals[i][cUser-1]||'').trim();
+    const status = String(vals[i][cStat-1]||'').trim().toLowerCase();
+
+    if (!userId || !roomId) { skipped++; continue; }
+
+    const okStatus = (OCCUPIED_STATUS_KEYWORDS || []).some(k => st.includes(String(k).toLowerCase()));
+    if (!okStatus) { skipped++; continue; }
+
+    const hasDate = cDate && (vals[i][cDate-1] instanceof Date || String(vals[i][cDate-1]||'').trim());
+    const hasTime = cTime && String(vals[i][cTime-1]||'').trim();
+    const confirmed = cConf && !!vals[i][cConf-1];
+    if (hasDate || hasTime || confirmed) { skipped++; continue; }
+
+    try {
+      // ----- Added: pre-prompt message before showing the date picker -----
+      const promptMsg =
+        'เรียนลูกค้า 🙏\n' +
+        'กรุณา **วันที่และเวลาเช็คอิน 📅** เพื่อให้เราคำนวณค่าเช่า ' +
+        '**ตามจำนวนวันที่เข้าพักจริงสำหรับเดือนแรก ⚖️** อย่างยุติธรรมครับ/ค่ะ\n' +
+        'ตัวอย่าง: 4,000/เดือน ≈ 133/วัน 🧮 เช็คอิน 10 → ~2,940 บ. (ปัดขึ้นหลักสิบ)\n' +
+        `⏰ เลือกเวลาได้เฉพาะ ${CHECKIN_PICKER_EARLIEST_TIME_LABEL}-${CHECKIN_PICKER_LATEST_TIME_LABEL} น. เท่านั้น\n` +
+        '**กรุณากดยืนยันภายใน 31 ต.ค. ⏰** หากไม่ยืนยันตามกำหนด อาจคิดค่าเช่าเต็มเดือนของเดือนแรก ⚠️\n' +
+        'กดปุ่มด้านล่างเพื่อเลือกวันที่เช็คอินได้เลยครับ/ค่ะ 📅';
+
+      UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
+        method: 'post',
+        headers: {
+          'Content-Type': 'application/json; charset=UTF-8',
+          'Authorization': 'Bearer ' + token
+        },
+        payload: JSON.stringify({
+          to: userId,
+          messages: [{ type: 'text', text: promptMsg }]
+        }),
+        muteHttpExceptions: true
+      });
+      // -------------------------------------------------------------------
+
+      // ส่งตัวเลือกวันที่ (date picker) ต่อทันที
+      sendCheckinPickerToUser(userId, roomId);
+      sent++;
+
+      // หน่วงเล็กน้อยกัน rate-limit LINE (120ms ตามเดิม)
+      Utilities.sleep(120);
+    } catch(e) {
+      Logger.log('Failed push to '+roomId+' ('+userId+'): '+e);
+    }
+  }
+  const msg = `sendCheckinPickerToEligibleTenants: sent=${sent}, skipped=${skipped}, scanned=${vals.length}`;
+  Logger.log(msg);
+  return msg;
+}
+
+
+
+/** Reusable sender (pushes the datetime picker). */
+function sendCheckinPickerToUser(userId, roomId) {
+  const url = "https://api.line.me/v2/bot/message/push";
+  const pickerData = _buildPostbackData_({ act: 'checkin_pick', room: roomId || '' }) || 'act=checkin_pick';
   const payload = {
-    requests: [{
-      image: { content: b64 },
-      features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
-      imageContext: {
-        // OCR ไทย + อังกฤษ
-        languageHints: ['th', 'en']
+    to: userId,
+    messages: [{
+      type: "template",
+      altText: "เลือกวัน–เวลาเช็คอิน",
+      template: {
+        type: "confirm",
+        text: `ห้อง ${roomId || "-"}\nโปรดเลือกวัน–เวลาเช็คอิน (${CHECKIN_PICKER_EARLIEST_TIME_LABEL}-${CHECKIN_PICKER_LATEST_TIME_LABEL} น. เท่านั้น)`,
+        actions: [
+          {
+            type: "datetimepicker",
+            label: "เลือกวัน–เวลา",
+            data: pickerData,
+            mode: "datetime",
+            max: CHECKIN_PICKER_MAX_DATETIME
+          },
+          { type: "postback",       label: "ยกเลิก",        data: "act=rent_cancel" }
+        ]
       }
     }]
   };
-
   const res = UrlFetchApp.fetch(url, {
+    method: "post",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + LINE_TOKEN },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+  Logger.log('push -> ' + res.getResponseCode() + ' ' + res.getContentText());
+}
+
+/** === TEST: push to *your* LINE ID once === */
+function testSendCheckinPickerToMe() {
+  const MY_LINE_USER_ID = 'Ue90558b73d62863e2287ac32e69541a3'; // <- yours
+  const roomId = _findRoomByUserId_(MY_LINE_USER_ID);          // optional, just for nicer text
+  sendCheckinPickerToUser(MY_LINE_USER_ID, roomId);
+}
+
+function testCreateBookingPdfFromRow(rowNumber) {
+  const rowIdx = Number(rowNumber) || 2;
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
+  if (!sh) throw new Error('Sheet not found: ' + SHEET_NAME);
+  const headers = _headersRow_(sh);
+  const lastRow = sh.getLastRow();
+  if (rowIdx < 2 || rowIdx > lastRow) {
+    throw new Error('Row out of range: ' + rowIdx);
+  }
+
+  const cCode     = headers.findIndex(h => /^code$/i.test(h)) + 1 || 1;
+  const cName     = _findCol_(headers, ['fullname','ชื่อ','ชื่อ-สกุล']) || 3;
+  const cPhone    = _findCol_(headers, ['phone','โทร']) || 5;
+  const cUserId   = _findUserIdCol_(headers);
+  const cRoomId   = _findCol_(headers, ['room','room id','ห้อง']);
+  const cPaidAmt  = _findCol_(headers, ['paid amount','ยอดที่ชำระแล้ว']);
+  const cExpected = _findCol_(headers, ['expected amount','ยอดที่ต้องชำระ','amount']);
+  const cRef      = _findCol_(headers, ['ref','reference','เลขอ้างอิง']);
+  const cNotes    = _findCol_(headers, ['notes','หมายเหตุ']);
+
+  const getVal = (col) => col ? String(sh.getRange(rowIdx, col).getValue() || '').trim() : '';
+
+  const paidAmt = cPaidAmt ? Number(sh.getRange(rowIdx, cPaidAmt).getValue() || 0) : 0;
+  const expAmt  = cExpected ? Number(sh.getRange(rowIdx, cExpected).getValue() || 0) : 0;
+
+  const payload = {
+    code: getVal(cCode),
+    date: new Date(),
+    customer: getVal(cName),
+    phone: getVal(cPhone),
+    line_id: getVal(cUserId),
+    room_id: getVal(cRoomId),
+    paid_amount: paidAmt || expAmt,
+    bank_ref: getVal(cRef),
+    move_in_month: '',
+    move_in_window: '',
+    contact_phone: getVal(cPhone),
+    contact_line: '@MamaMansion',
+    address: 'ฉลองกรุง 37 (ใกล้นิคมลาดกระบัง)',
+    remaining_amount: 0,
+    notes: getVal(cNotes)
+  };
+
+  const url = createBookingPdf_(payload);
+  Logger.log('Booking PDF URL: ' + url);
+  return url;
+}
+
+function createBookingPdf_(row) {
+  // row = { code, date, customer, phone, line_id, room_id, paid_amount,
+  //         bank_ref, move_in_month, move_in_window, contact_phone,
+  //         contact_line, address, remaining_amount, notes }
+
+  // --- 0) Read room price from Rooms sheet ---
+  var ssRooms = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Rooms');
+  var headR   = ssRooms.getRange(1,1,1, ssRooms.getLastColumn()).getValues()[0].map(String);
+  var cRoomId = headR.findIndex(function(h){ return h.toLowerCase().includes('room'); }) + 1;
+  var cPrice  = headR.findIndex(function(h){ return /(ราคาห้อง|room\s*price|price)/i.test(h); }) + 1;
+  var roomPrice = 0;
+
+  if (cRoomId && cPrice) {
+    var vals = ssRooms.getRange(2,1, Math.max(0, ssRooms.getLastRow()-1), ssRooms.getLastColumn()).getValues();
+    for (var i=0;i<vals.length;i++){
+      var id = String(vals[i][cRoomId-1] || '').trim();
+      if (id && id.toUpperCase() === String(row.room_id||'').toUpperCase()) {
+        roomPrice = Number(vals[i][cPrice-1] || 0);
+        break;
+      }
+    }
+  }
+
+  // --- 1) Calculate amounts ---
+  var paid = Number(row.paid_amount || 0);
+
+  // Move-in fees: +5000 - 2000 = 3000 (adjust here if policy changes)
+  var feeJoin     = 5000;
+  var feeDiscount = 2000;
+  var feeNet      = feeJoin - feeDiscount; // = 3000
+
+  var totalBeforePaid   = (roomPrice || 0) + feeNet;
+  var remainingComputed = Math.max(totalBeforePaid - paid, 0);
+
+  // ensure the object carries the computed remaining amount
+  row.remaining_amount = remainingComputed;
+
+  // human-readable calculation line
+  var remainingCalcText = Utilities.formatString(
+    '%s + %s - %s = %s บาท',
+    (roomPrice||0).toLocaleString(),
+    feeNet.toLocaleString(),
+    paid.toLocaleString(),
+    remainingComputed.toLocaleString()
+  );
+
+  // --- 2) Copy Google Doc template ---
+  var srcFile  = DriveApp.getFileById(BOOKING_DOC_TEMPLATE_ID); // must be a Google Doc
+  var copyName = 'Booking_' + row.code + '_' +
+    Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss');
+  var copyFile = srcFile.makeCopy(copyName);
+  var copyId   = copyFile.getId();
+
+  // open with retry to avoid transient “inaccessible” errors
+  var doc = null, tries = 0;
+  while (!doc && tries < 5) {
+    try { doc = DocumentApp.openById(copyId); }
+    catch (e) { tries++; Utilities.sleep(300 * tries); }
+  }
+  if (!doc) throw new Error('Template copy could not be opened (inaccessible).');
+
+  // --- 3) Replace placeholders in the Doc ---
+  var body = doc.getBody();
+  var fmt  = function(d){ return Utilities.formatDate(d || new Date(), Session.getScriptTimeZone(), 'dd/MM/yyyy HH:mm'); };
+
+  body.replaceText('{{date}}',             fmt(row.date));
+  body.replaceText('{{code}}',             row.code || '-');
+  body.replaceText('{{customer}}',         row.customer || '-');
+  body.replaceText('{{room_id}}',          row.room_id || '-');
+
+  body.replaceText('{{paid_amount}}',      (paid||0).toLocaleString() + ' บาท');
+  body.replaceText('{{bank_ref}}',         row.bank_ref || '-'); // remove from template if unused
+  body.replaceText('{{move_in_month}}',    row.move_in_month || '-');
+  body.replaceText('{{move_in_window}}',   row.move_in_window || '-');
+  body.replaceText('{{contact_phone}}',    row.contact_phone || '-');
+  body.replaceText('{{contact_line}}',     row.contact_line || '-');
+  body.replaceText('{{address}}',          row.address || '-');
+  body.replaceText('{{remaining_amount}}', (remainingComputed||0).toLocaleString() + ' บาท');
+  body.replaceText('{{notes}}',            row.notes || '');
+
+  // New calculation placeholders you can place in the template
+  body.replaceText('{{room_price}}',            (roomPrice||0).toLocaleString());
+  body.replaceText('{{fee_join}}',              feeJoin.toLocaleString());
+  body.replaceText('{{fee_discount}}',          feeDiscount.toLocaleString());
+  body.replaceText('{{room_price_plus_fee}}',   totalBeforePaid.toLocaleString());
+  body.replaceText('{{remaining_calc}}',        remainingCalcText);
+
+  doc.saveAndClose();
+
+  // --- 4) Export PDF and share link ---
+  var pdfBlob = DriveApp.getFileById(copyId).getAs(MimeType.PDF);
+  var folder  = DriveApp.getFolderById(BOOKING_PDF_FOLDER_ID);
+  var pdf     = folder.createFile(pdfBlob).setName(copyName + '.pdf');
+
+  pdf.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  // Optional cleanup of the working Doc:
+  // DriveApp.getFileById(copyId).setTrashed(true);
+
+  return pdf.getUrl();
+}
+
+function _rowLink_(row){
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
+  const gid = sh.getSheetId();
+  return `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=${gid}&range=A${row}`;
+}
+
+
+// เมื่อสถานะเป็น Paid → ตั้งคิวที่ Rooms (คอลัมน์ Horganice Done? = FALSE)
+function _markRoomNeedsHorganice_(roomId, payload) {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const shRooms = ss.getSheetByName('Rooms');
+  if (!shRooms) return;
+
+  const head = shRooms.getRange(1,1,1,shRooms.getLastColumn()).getValues()[0].map(String);
+  const cId   = head.findIndex(h => h.toLowerCase().includes('room')) + 1;
+  const cDone = _findCol_(head, ['horganice done?', 'hg done?', 'สร้างใน horganice แล้ว?', 'done?']);
+  const cAt   = _findCol_(head, ['horganice at', 'hg at', 'เวลาบันทึก horganice']);
+  const cCode = _findCol_(head, ['hg code','horganice code']);
+  const cName = _findCol_(head, ['hg name','horganice name','ชื่อลูกค้า']);
+  const cPhone= _findCol_(head, ['hg phone','horganice phone','โทรลูกค้า']);
+  const cLink = _findCol_(head, ['hg row link','horganice row link','ลิงก์แถว']);
+  if (!cId || !cDone) return;
+
+  const last = shRooms.getLastRow();
+  const vals = shRooms.getRange(2,1, last-1, shRooms.getLastColumn()).getValues();
+  let r = -1;
+  for (let i=0;i<vals.length;i++){
+    if (String(vals[i][cId-1]).trim() === roomId) { r = i+2; break; }
+  }
+  if (r < 2) return;
+
+  shRooms.getRange(r, cDone).setValue(false);   // ยังไม่เสร็จ
+  if (cAt)   shRooms.getRange(r, cAt).setValue('');
+  if (cCode) shRooms.getRange(r, cCode).setValue(payload.code || '');
+  if (cName) shRooms.getRange(r, cName).setValue(payload.name || '');
+  if (cPhone)shRooms.getRange(r, cPhone).setValue(payload.phone || '');
+  if (cLink) shRooms.getRange(r, cLink).setValue(_rowLink_(payload.rowIndex));
+}
+
+// ใส่เวลาอัตโนมัติเมื่อ “Horganice Done?” ถูกติ๊ก
+function _timestampWhenRoomHgDone_(shRooms, row) {
+  const head = shRooms.getRange(1,1,1,shRooms.getLastColumn()).getValues()[0].map(String);
+  const cDone = _findCol_(head, ['horganice done?', 'hg done?', 'สร้างใน horganice แล้ว?', 'done?']);
+  const cAt   = _findCol_(head, ['horganice at', 'hg at', 'เวลาบันทึก horganice']);
+  if (!cDone || !cAt) return;
+
+  const done = !!shRooms.getRange(row, cDone).getValue();
+  shRooms.getRange(row, cAt).setValue(done ? new Date() : '');
+}
+
+
+// [ADD] helper: set value to Rooms.Parking by RoomId
+function _setRoomParking_(roomId, value) {
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName("Rooms");
+  if (!sh) return;
+  const values = sh.getDataRange().getValues();
+  const header = values.shift().map(String);
+
+  const cId = header.findIndex(h => h.toLowerCase().includes("room"));
+  const cParking = header.findIndex(h => h.toLowerCase().includes("parking")); // ชื่อคอลัมน์ใน Rooms = "Parking"
+  if (cId < 0 || cParking < 0) return;
+
+  for (let r = 0; r < values.length; r++) {
+    const id = String(values[r][cId] || "").trim();
+    if (id === roomId) {
+      sh.getRange(r + 2, cParking + 1).setValue(value);
+      return;
+    }
+  }
+}
+
+// อ่านราคาห้องจากชีต Rooms (รองรับหัวข้อไทย/อังกฤษ)
+function _getRoomPriceFromRooms_(roomId) {
+  if (!roomId) return 0;
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ss.getSheetByName('Rooms');
+  if (!sh) return 0;
+
+  const values = sh.getDataRange().getValues();
+  const headers = values.shift().map(h => String(h || '').trim().toLowerCase());
+
+  const cId = headers.findIndex(h => h.includes('room')); // RoomID
+  // หา column ราคาโดยดูได้ทั้ง "ราคาห้อง", "price", "room price", "expected amount"
+  const aliases = ['ราคาห้อง', 'price', 'room price', 'expected amount', 'amount', 'monthly'];
+  let cPrice = -1;
+  for (const a of aliases) {
+    const i = headers.findIndex(h => h.indexOf(a.toLowerCase()) !== -1);
+    if (i > -1) { cPrice = i; break; }
+  }
+  if (cId < 0 || cPrice < 0) return 0;
+
+  for (const row of values) {
+    const id = String(row[cId] || '').trim().toUpperCase();
+    if (id === String(roomId).toUpperCase()) {
+      const p = Number(row[cPrice] || 0);
+      return isNaN(p) ? 0 : p;
+    }
+  }
+  return 0;
+}
+
+function dailyMoveOutSweep() {
+  try {
+    const result = markSoonStatuses_(DAYS_AHEAD_SOON);  // 90 by default
+    Logger.log(result);
+    return result;
+  } catch (err) {
+    Logger.log('dailyMoveOutSweep ERROR: ' + err);
+    try { sendLineMessage('❗dailyMoveOutSweep ERROR: ' + err); } catch (_e) {}
+    return 'dailyMoveOutSweep ERROR';
+  }
+}
+
+/** Run daily (e.g., 09:00 Asia/Bangkok) to remind tomorrow's check-ins */
+function dailyCheckinReminder() {
+  const tz = Session.getScriptTimeZone() || 'Asia/Bangkok';
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ss.getSheetByName('Rooms');
+  if (!sh) return;
+
+  const H = sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(h=>String(h||'').trim());
+  const cRoom  = H.findIndex(h=>h.toLowerCase().includes('room')) + 1;
+  const cUser  = H.findIndex(h=>h.toLowerCase().includes('line id')) + 1;
+  const cDate  = H.indexOf('CheckinDate') + 1;
+  const cTime  = H.indexOf('CheckinTime') + 1;
+  const cConf  = H.indexOf('CheckinConfirmed') + 1;
+  let cSent    = H.indexOf('ReminderSent') + 1;
+  let cSentAt  = H.indexOf('ReminderSentAt') + 1;
+
+  if (!cRoom || !cUser || !cDate || !cTime || !cConf) return; // missing required columns
+
+  const last = sh.getLastRow();
+  if (last < 2) return;
+
+  const rng = sh.getRange(2,1,last-1,sh.getLastColumn());
+  const vals = rng.getValues();
+
+  // helper to compare YYYY-MM-DD only
+  const ymd = d => Utilities.formatDate(new Date(d.getFullYear(), d.getMonth(), d.getDate()), tz, 'yyyy-MM-dd');
+  const today = new Date(); today.setHours(0,0,0,0);
+  const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate()+1);
+
+  const out = vals.map(r => r.slice()); // copy for bulk write
+
+  for (let i=0;i<vals.length;i++){
+    const row = vals[i];
+    const userId = String(row[cUser-1]||'').trim();
+    const roomId = String(row[cRoom-1]||'').trim();
+    const ckd = row[cDate-1];
+    const ckt = String(row[cTime-1]||'').trim();
+    const confirmed = !!row[cConf-1];
+
+    if (!userId || !roomId || !confirmed) continue;
+    if (!(ckd instanceof Date)) continue;
+
+    // D-1 reminder
+    if (ymd(ckd) === ymd(tomorrow)) {
+      const already = cSent ? String(row[cSent-1]||'').toUpperCase() : '';
+      if (already !== 'D-1') {
+        pushLineToUser_(userId,
+          "แจ้งเตือนล่วงหน้า 1 วันค่ะ 🗓️\n" +
+          `ห้อง: ${roomId}\n` +
+          `วันเช็คอิน: ${Utilities.formatDate(ckd, tz, 'dd/MM/yyyy')}\n` +
+          (ckt ? `เวลา: ${ckt}\n` : '') +
+          "หากต้องการเปลี่ยนเวลา โปรดแจ้งกลับทางแชตค่ะ"
+        );
+        if (cSent)   out[i][cSent-1] = 'D-1';
+        if (cSentAt) out[i][cSentAt-1] = new Date();
+      }
+    }
+  }
+
+  // write back if we have the columns
+  if (cSent || cSentAt) rng.setValues(out);
+}
+
+
+function markSoonStatuses_(daysAhead) {
+  daysAhead = Number(daysAhead) || 90;
+
+  const ss = SpreadsheetApp.openById(SHEET_ID);           // ✅ use SHEET_ID
+  const sh = ss.getSheetByName(SHEET_ROOMS);
+  if (!sh) throw new Error('Rooms sheet not found: ' + SHEET_ROOMS);
+
+  const lastRow = sh.getLastRow();
+  const lastCol = sh.getLastColumn();
+  if (lastRow < 2 || lastCol < 1) return 'No data rows';
+
+  const headers = sh.getRange(1,1,1,lastCol).getValues()[0]
+    .map(h => String(h||'').trim().toLowerCase());
+
+  const findCol = (aliases) => {
+    for (let c = 0; c < headers.length; c++) {
+      for (const a of aliases) {
+        if (headers[c].indexOf(String(a).toLowerCase()) !== -1) return c + 1;
+      }
+    }
+    return 0;
+  };
+
+  const cRoom = findCol(['room','room id','ห้อง']);
+  const cStat = findCol(['status','สถานะ']);
+  // ✅ use your global alias list for move-out date
+  const cMove = findCol(ROOMS_MOVEOUT_ALIASES);
+  if (!cRoom || !cStat || !cMove) {
+    throw new Error('Required columns not found (Room / Status / Move-out Date)');
+  }
+
+  const rng    = sh.getRange(2, 1, lastRow-1, lastCol);
+  const values = rng.getValues();
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const max   = new Date(today); max.setDate(max.getDate() + daysAhead);
+
+  let setSoon = 0, setAvail = 0;
+
+  // We’ll write back only where needed
+  const out = values.map((row) => row.slice()); // shallow clone rows
+
+  for (let i = 0; i < values.length; i++) {
+    const mov = values[i][cMove - 1];
+    if (!(mov instanceof Date)) continue;   // skip if no valid date
+
+    const movDate = new Date(mov.getFullYear(), mov.getMonth(), mov.getDate());
+    const cur     = String(values[i][cStat - 1] || '').trim().toLowerCase();
+
+    if (movDate >= today && movDate <= max) {
+      if (cur !== 'soon' && cur !== 'กำลังจะว่าง') {
+        out[i][cStat - 1] = 'soon';
+        setSoon++;
+      }
+      continue;
+    }
+
+    if (movDate < today) {
+      if (cur !== 'avail' && cur !== 'ว่าง') {
+        out[i][cStat - 1] = 'avail';
+        setAvail++;
+      }
+    }
+  }
+
+  // Bulk write only if there were changes
+  if (setSoon || setAvail) {
+    rng.setValues(out);
+  }
+
+  SpreadsheetApp.flush();
+  return `Updated: soon=${setSoon}, avail=${setAvail}`;
+}
+
+// สร้างชีต + เฮดเดอร์ (ถ้ายังไม่มี)
+function _ensurePrebookSheet_() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  let sh = ss.getSheetByName(PREBOOK_SHEET_NAME);
+  if (!sh) {
+    sh = ss.insertSheet(PREBOOK_SHEET_NAME);
+    sh.appendRow([
+      'Code', 'Timestamp', 'Fullname', 'Line ID', 'Phone',
+      'Parking', 'Move-in Month', 'Notes', 'Status'
+    ]);
+  } else if (sh.getLastRow() < 1) {
+    sh.appendRow([
+      'Code', 'Timestamp', 'Fullname', 'Line ID', 'Phone',
+      'Parking', 'Move-in Month', 'Notes', 'Status'
+    ]);
+  }
+  return sh;
+}
+
+// สร้างโค้ดใหม่ #PBxxx
+function _nextPrebookCode_(sh) {
+  const lastRow = sh.getLastRow();
+  if (lastRow <= 1) return PREBOOK_CODE_PREFIX + '000';
+  const lastCode = String(sh.getRange(lastRow, 1).getValue() || '').trim();
+  const num = parseInt(lastCode.replace(PREBOOK_CODE_PREFIX, ''), 10) || 0;
+  return PREBOOK_CODE_PREFIX + String(num + 1).padStart(3, '0');
+}
+
+
+
+
+
+
+
+const RICHMENU_ID_RAW = '809f92d6bbba5cc330d0a89f92323a3a';           // your menu
+const DRIVE_IMAGE_FILE_ID = '1DZ-uDyKFt9LJplT8ieDNDBbD6LL7LFSz';         // your Drive image (2500×1686, <=1MB)
+
+/**************** CREATE NEW MENU ****************/
+function createTenantPaidRichMenu_() {
+  const payload = {
+    size: { width: 2500, height: 1686 },
+    selected: true,
+    name: 'Tenant Paid Menu ' + Utilities.formatDate(new Date(), 'Asia/Bangkok', 'yyyyMMdd-HHmm'),
+    chatBarText: 'เมนูผู้เช่า',
+    areas: [
+      {
+        bounds: { x: 0, y: 0, width: 833, height: 843 },
+        action: { type: 'message', text: 'ฟีดแบ็ก (ไม่ระบุตัวตน)' }
+      },
+      {
+        bounds: { x: 833, y: 0, width: 834, height: 843 },
+        action: { type: 'message', text: 'จ่ายค่าเช่า' }
+      },
+      {
+        bounds: { x: 1667, y: 0, width: 833, height: 843 },
+        action: { type: 'message', text: 'แจ้งซ่อม' }
+      },
+      {
+        bounds: { x: 0, y: 843, width: 833, height: 843 },
+        action: { type: 'message', text: 'คู่มือผู้เช่า' }
+      },
+      {
+        bounds: { x: 833, y: 843, width: 834, height: 843 },
+        action: { type: 'message', text: 'บริการเสริม' }
+      },
+      {
+        bounds: { x: 1667, y: 843, width: 833, height: 843 },
+        action: { type: 'message', text: 'ติดต่อ' }
+      }
+    ]
+  };
+
+  const res = UrlFetchApp.fetch('https://api.line.me/v2/bot/richmenu', {
     method: 'post',
-    contentType: 'application/json',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer ' + LINE_TOKEN
+    },
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   });
 
   const code = res.getResponseCode();
-  if (code >= 300) throw new Error('Vision error ' + code + ' ' + res.getContentText());
-
-  const data = JSON.parse(res.getContentText());
-  const text = data.responses?.[0]?.fullTextAnnotation?.text || '';
-  return text;
-}
-
-function thaiYearToCE_(y) {
-  y = Number(y);
-  if (y > 2400) return y - 543;
-  return y;
-}
-
-function parseThaiSlip_(rawText) {
-  const text = String(rawText || '').replace(/\u200B/g,'').replace(/\s+/g,' ').trim();
-
-  // 1) Amount (THB)
-  let amount = null;
-  const amtPatterns = [
-    /(?:ยอด(?:เงิน)?|จำนวนเงิน|amount)\s*[:\-]?\s*([0-9,.]+)\s*(?:บาท|thb)?/i,
-    /(?:thb|บาท)\s*([0-9,.]+)/i,
-    /\b([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{1,2})?)\s*(?:บาท|thb)\b/i
-  ];
-  for (const re of amtPatterns) {
-    const m = text.match(re);
-    if (m) { amount = Number(String(m[1]).replace(/,/g,'')); break; }
+  const body = res.getContentText();
+  Logger.log('CREATE -> ' + code + ' ' + body);
+  if (code < 200 || code >= 300) {
+    throw new Error('Create rich menu failed: ' + code + ' ' + body);
   }
 
-  // 2) Date & Time
-  let txDate = null, txTime = null;
+  const json = JSON.parse(body || '{}');
+  return json.richMenuId || '';
+}
 
-  // dd/mm/yyyy (ไทย/สากล)
-  let m = text.match(/\b([0-3]?\d)[\/\-]([01]?\d)[\/\-](\d{4})\b/);
-  if (m) {
-    const d = Number(m[1]), mo = Number(m[2]), y = thaiYearToCE_(m[3]);
-    try { txDate = new Date(y, mo-1, d); } catch(e){}
+/**************** RUN THIS ****************/
+function uploadTenantMenuImageTo_(richMenuIdRaw) {
+  const richMenuId = RICH(richMenuIdRaw);
+
+  // 1) verify menu & size
+  const meta = fetchL('https://api.line.me/v2/bot/richmenu/' + richMenuId, { method: 'get' });
+  if (meta.getResponseCode() !== 200) {
+    throw new Error('Menu not found: ' + meta.getContentText());
+  }
+  const m = JSON.parse(meta.getContentText() || '{}');
+  if (!(m.size && m.size.width === 2500 && m.size.height === 1686)) {
+    throw new Error('Menu must be 2500x1686; got ' + JSON.stringify(m.size));
   }
 
-  // 1 ก.ย. 2568 / 1 กันยายน 2568
-  if (!txDate) {
-    const m2 = text.match(/\b([0-3]?\d)\s*(ม\.ค\.|ก\.พ\.|มี\.ค\.|เม\.ย\.|พ\.ค\.|มิ\.ย\.|ก\.ค\.|ส\.ค\.|ก\.ย\.|ต\.ค\.|พ\.ย\.|ธ\.ค\.|มกราคม|กุมภาพันธ์|มีนาคม|เมษายน|พฤษภาคม|มิถุนายน|กรกฎาคม|สิงหาคม|กันยายน|ตุลาคม|พฤศจิกายน|ธันวาคม)\s*(\d{4})\b/);
-    if (m2) {
-      const d = Number(m2[1]); const monthName = m2[2]; const y = thaiYearToCE_(m2[3]);
-      const mo = TH_MONTHS[monthName] || null;
-      if (mo) { try { txDate = new Date(y, mo-1, d); } catch(e){} }
-    }
+  // 2) load image
+  const file = DriveApp.getFileById(DRIVE_IMAGE_FILE_ID);
+  const mime = String(file.getMimeType() || '').toLowerCase();
+  const isPng = mime.indexOf('png') !== -1;
+  const isJpg = mime.indexOf('jpeg') !== -1 || mime.indexOf('jpg') !== -1;
+  if (!isPng && !isJpg) {
+    throw new Error('Image must be PNG or JPEG; got ' + mime);
   }
 
-  // Time hh:mm
-  const t = text.match(/\b([01]?\d|2[0-3])[:\.]([0-5]\d)\b/);
-  if (t) {
-    txTime = `${t[1].padStart(2,'0')}:${t[2]}`;
+  const blob = file.getBlob().setContentType(isPng ? 'image/png' : 'image/jpeg');
+  const bytes = blob.getBytes();
+  if (bytes.length > 1000000) {
+    throw new Error('Image too large: ' + bytes.length + ' bytes');
   }
 
-  // 3) Reference / Txn ID
-  let txId = null;
-  const refPatterns = [
-    /(หมายเลขอ้างอิง|เลขที่อ้างอิง|reference|ref\.?|transaction id|trace id)\s*[:\-]?\s*([A-Za-z0-9\-]{6,})/i,
-    /\bFT[A-Z0-9\-]{6,}\b/i
-  ];
-  for (const re of refPatterns) {
-    const mm = text.match(re);
-    if (mm) { txId = (mm[2] || mm[0]).replace(/^(หมายเลขอ้างอิง|เลขที่อ้างอิง|reference|ref\.?|transaction id|trace id)\s*[:\-]?\s*/i,'').trim(); break; }
-  }
-
-  // 4) Bank detection (หยาบ ๆ)
-  let bank = null;
-  if (/ไทยพาณิชย์|SCB/i.test(text)) bank = 'SCB';
-  else if (/กสิกร|KBank/i.test(text)) bank = 'KBank';
-  else if (/กรุงไทย|Krungthai|KTB/i.test(text)) bank = 'KTB';
-  else if (/กรุงเทพ|Bangkok Bank|BBL/i.test(text)) bank = 'BBL';
-  else if (/กรุงศรี|Krungsri|BAY/i.test(text)) bank = 'BAY';
-  else if (/พร้อมเพย์|PromptPay/i.test(text)) bank = 'PromptPay';
-
-  return {
-    rawText: text,
-    amount: (amount != null && !isNaN(amount)) ? amount : null,
-    txDate: txDate || null,
-    txTime: txTime || null,
-    txId: txId || null,
-    bank: bank || null
-  };
-}
-
-
-/*************** 8) RECONCILIATION (Payments/Bills/Review) ***************/
-function monthKey_(dateObj) {
-  const d = dateObj || new Date();
-  return Utilities.formatDate(d, 'Asia/Bangkok', 'yyyy-MM');
-}
-
-function openSheetByName_(name) {
-  const ss = SpreadsheetApp.openById(SHEET_ID);
-  const sh = ss.getSheetByName(name);
-  if (!sh) throw new Error('Sheet not found: ' + name);
-  return sh;
-}
-function getHeaders_(sh) {
-  const lastCol = sh.getLastColumn();
-  if (lastCol < 1) return [];
-  return sh.getRange(1,1,1,lastCol).getValues()[0].map(h => String(h||'').trim());
-}
-function idxOf_(headers, keyLike) {
-  const lower = headers.map(h => h.toLowerCase());
-  const key   = keyLike.toLowerCase();
-  for (let i = 0; i < lower.length; i++) if (lower[i].indexOf(key) !== -1) return i;
-  return -1;
-}
-function genSlipId_() {
-  const ts = Utilities.formatDate(new Date(), 'Asia/Bangkok', "yyyyMMdd-HHmmss");
-  const rnd = Math.floor(Math.random()*9000)+1000;
-  return `SLIP-${ts}-${rnd}`;
-}
-
-function recordSlipToInbox_({lineUserId, room, slipUrl, declaredAmount, note}) {
-  const sh  = openRevenueSheetByName_('Payments_Inbox');  // << เปลี่ยนตรงนี้
-  const hdr = getHeaders_(sh);
-
-  const cSlipID   = idxOf_(hdr, 'slipid');
-  const cRecvAt   = idxOf_(hdr, 'received');
-  const cUser     = idxOf_(hdr, 'lineuserid');
-  const cRoom     = idxOf_(hdr, 'room');
-  const cAmtDecl  = idxOf_(hdr, 'amountdecl');
-  const cUrl      = idxOf_(hdr, 'slipurl');
-  const cMatchSt  = idxOf_(hdr, 'matchstatus');
-  const cNotes    = idxOf_(hdr, 'notes');
-
-  const slipId = genSlipId_();
-  const row    = new Array(hdr.length).fill('');
-
-  if (cSlipID  > -1) row[cSlipID]  = slipId;
-  if (cRecvAt  > -1) row[cRecvAt]  = new Date();
-  if (cUser    > -1) row[cUser]    = lineUserId || '';
-  if (cRoom    > -1) row[cRoom]    = (room || '').toUpperCase();
-  if (cAmtDecl > -1) row[cAmtDecl] = (declaredAmount != null ? Number(declaredAmount) : '');
-  if (cUrl     > -1) row[cUrl]     = slipUrl || '';
-  if (cMatchSt > -1) row[cMatchSt] = 'pending';
-  if (cNotes   > -1) row[cNotes]   = note || '';
-
-  const nextRow = sh.getLastRow() + 1;
-  sh.getRange(nextRow, 1, 1, hdr.length).setValues([row]);
-  return { slipId, rowIndex: nextRow };
-}
-
-function findCandidateBill_({ room, declaredAmount }) {
-  if (!room) return null;
-  const sh  = openRevenueSheetByName_('Horga_Bills');     // << เปลี่ยนตรงนี้
-  const hdr = getHeaders_(sh);
-  const lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
-  if (lastRow < 2) return null;
-
-  const cBill   = idxOf_(hdr, 'billid');
-  const cRoom   = idxOf_(hdr, 'room');
-  const cMonth  = idxOf_(hdr, 'month');       // คาดว่าเป็น yyyy-MM
-  const cAmtDue = idxOf_(hdr, 'amountdue');
-  const cStatus = idxOf_(hdr, 'status');
-  const cSlipID = idxOf_(hdr, 'slipid');
-
-  const values = sh.getRange(2,1,lastRow-1,lastCol).getValues();
-  const nowKey = monthKey_(new Date());
-  const wantRoom = String(room||'').trim().toUpperCase();
-
-  const candidates = [];
-  for (let i=0;i<values.length;i++) {
-    const row = values[i];
-    const rRoom   = String(row[cRoom] || '').trim().toUpperCase();
-    const rStatus = String(row[cStatus] || '').trim().toLowerCase();
-    const rMonth  = String(row[cMonth] || '').trim();
-    const rSlip   = String(row[cSlipID] || '').trim();
-    if (rRoom !== wantRoom) continue;
-
-    // unpaid = ไม่มี slip และ status ไม่ใช่ 'paid'
-    const unpaid = !(rStatus === 'paid' || rStatus === 'จ่ายแล้ว' || rSlip);
-    if (!unpaid) continue;
-
-    const amtDue = Number(row[cAmtDue] || 0);
-    let score = (rMonth === nowKey ? 2 : 1);
-    if (declaredAmount != null && !isNaN(declaredAmount)) {
-      if (Math.abs(amtDue - Number(declaredAmount)) < 0.5) score += 2; // bonus เมื่อยอดตรง
-    }
-    candidates.push({ rowIndex: i+2, billId: String(row[cBill]||'').trim(), month: rMonth, amountDue: amtDue, score });
-  }
-
-  if (candidates.length === 0) return null;
-  candidates.sort((a,b) => b.score - a.score);
-  const topScore = candidates[0].score;
-  const topGroup = candidates.filter(x => x.score === topScore);
-  if (topGroup.length > 1) return { ambiguous: true, candidates: topGroup };
-  return { candidate: candidates[0] };
-}
-
-function updateBillWithSlip_({ rowIndex, slipId, markStatus }) {
-  const sh  = openRevenueSheetByName_('Horga_Bills');     // << เปลี่ยนตรงนี้
-  const hdr = getHeaders_(sh);
-  const cStatus = idxOf_(hdr, 'status');
-  const cPaidAt = idxOf_(hdr, 'paidat');
-  const cSlipID = idxOf_(hdr, 'slipid');
-
-  if (cSlipID > -1) sh.getRange(rowIndex, cSlipID+1).setValue(slipId);
-  if (cPaidAt > -1) sh.getRange(rowIndex, cPaidAt+1).setValue(new Date());
-  if (cStatus > -1) sh.getRange(rowIndex, cStatus+1).setValue(markStatus || 'Slip Received');
-}
-
-function updateInboxMatchResult_({ rowIndex, status, matchedBillId, confidence, note }) {
-  const sh  = openRevenueSheetByName_('Payments_Inbox');  // << เปลี่ยนตรงนี้
-  const hdr = getHeaders_(sh);
-  const cMatchSt = idxOf_(hdr, 'matchstatus');
-  const cMatchId = idxOf_(hdr, 'matchedbillid');
-  const cConf    = idxOf_(hdr, 'confidence');
-  const cNotes   = idxOf_(hdr, 'notes');
-
-  if (cMatchSt > -1) sh.getRange(rowIndex, cMatchSt+1).setValue(status || '');
-  if (cMatchId > -1) sh.getRange(rowIndex, cMatchId+1).setValue(matchedBillId || '');
-  if (cConf    > -1) sh.getRange(rowIndex, cConf+1).setValue(confidence != null ? Number(confidence) : '');
-  if (cNotes   > -1 && note) sh.getRange(rowIndex, cNotes+1).setValue(note);
-}
-
-function enqueueReview_({ room, billId, declaredAmount, amountDue, reason, slipId, note, lineUserId }) {
-  const sh  = openRevenueSheetByName_('Review_Queue');
-  const hdr = getHeaders_(sh);
-  const row = new Array(hdr.length).fill('');
-
-  const cCreated = idxOf_(hdr, 'createdat');
-  const cRoom    = idxOf_(hdr, 'room');
-  const cBill    = idxOf_(hdr, 'billid');
-  const cAmtDec  = idxOf_(hdr, 'amountdecl');
-  const cAmtDue  = idxOf_(hdr, 'amountdue');
-  const cReason  = idxOf_(hdr, 'reason');
-  const cSlipID  = idxOf_(hdr, 'slipid');
-  const cNotes   = idxOf_(hdr, 'notes');
-  const cUser    = idxOf_(hdr, 'lineuserid'); // NEW
-
-  if (cCreated > -1) row[cCreated] = new Date();
-  if (cRoom    > -1) row[cRoom]    = (room || '').toUpperCase();
-  if (cBill    > -1) row[cBill]    = billId || '';
-  if (cAmtDec  > -1) row[cAmtDec]  = (declaredAmount != null ? Number(declaredAmount) : '');
-  if (cAmtDue  > -1) row[cAmtDue]  = (amountDue != null ? Number(amountDue) : '');
-  if (cReason  > -1) row[cReason]  = reason || '';
-  if (cSlipID  > -1) row[cSlipID]  = slipId || '';
-  if (cNotes   > -1 && note) row[cNotes] = note;
-  if (cUser    > -1) row[cUser]    = lineUserId || '';
-
-  const nextRow = sh.getLastRow() + 1;
-  sh.getRange(nextRow, 1, 1, hdr.length).setValues([row]);
-}
-
-function tryMatchAndConfirm_(args) {
-  const room       = (args.room || '').toUpperCase().trim();
-  const slipUrl    = args.slipUrl || '';
-  const lineUserId = args.lineUserId || '';
-  const fileId     = args.fileId || '';   // สำคัญสำหรับ OCR
-
-  // 1) เขียนเข้ากล่องรับเสมอ
-  const inbox = recordSlipToInbox_({
-    lineUserId, room, slipUrl, declaredAmount: null,
-    note: 'auto-created by LINE bot'
-  });
-
-  // 2) OCR จากไฟล์ (ถ้ามี fileId)
-  let ocr = null;
-  let ocrOk = false;
-  if (fileId) {
-    try {
-      const text = ocrSlipFromFileId_(fileId);
-      ocr = parseThaiSlip_(text);
-      ocrOk = !!(ocr && (ocr.amount != null || ocr.txDate || ocr.txId || ocr.bank));
-      updateInboxMatchResult_({
-        rowIndex: inbox.rowIndex,
-        status: 'pending_ocr',
-        matchedBillId: '',
-        confidence: '',
-        note: `OCR: amount=${ocr?.amount ?? ''}, date=${ocr?.txDate ? Utilities.formatDate(ocr.txDate,'Asia/Bangkok','yyyy-MM-dd') : ''}, bank=${ocr?.bank ?? ''}, ref=${ocr?.txId ?? ''}`
-      });
-      Logger.log('OCR_OK for inbox row %s', inbox.rowIndex);
-    } catch (e) {
-      Logger.log('OCR_FAIL: ' + e);
-      updateInboxMatchResult_({
-        rowIndex: inbox.rowIndex,
-        status: 'ocr_error',
-        matchedBillId: '',
-        confidence: '',
-        note: 'OCR_FAIL: ' + e
-      });
-    }
-  } else {
-    // ไม่มี fileId → ไม่มีทาง OCR ได้
-    updateInboxMatchResult_({
-      rowIndex: inbox.rowIndex,
-      status: 'no_ocr_source',
-      matchedBillId: '',
-      confidence: '',
-      note: 'No fileId → skip OCR'
-    });
-  }
-
-  // 3) หา Bill ผู้ท้าชิง (ถ้า OCR ได้ amount จะช่วยเพิ่มความแม่นยำ)
-  const declaredAmount = (ocr && ocr.amount != null) ? Number(ocr.amount) : null;
-  const found = findCandidateBill_({ room, declaredAmount });
-
-  if (!found) {
-    updateInboxMatchResult_({
-      rowIndex: inbox.rowIndex,
-      status: 'no_open_bill',
-      matchedBillId: '',
-      confidence: 0.0,
-      note: (ocrOk ? 'no_open_bill (have OCR)' : 'no_open_bill (no/failed OCR)')
-    });
-    enqueueReview_({ room, declaredAmount, reason: 'no_open_bill', slipId: inbox.slipId, note: 'auto-queued',
-    lineUserId });
-    return { ok:false, reason:'no_open_bill', slipId: inbox.slipId };
-  }
-
-  if (found.ambiguous) {
-    updateInboxMatchResult_({
-      rowIndex: inbox.rowIndex,
-      status: 'ambiguous',
-      matchedBillId: '',
-      confidence: 0.3,
-      note: 'multiple candidates' + (ocrOk ? ' (have OCR)' : ' (no/failed OCR)')
-    });
-    enqueueReview_({ room, declaredAmount, reason: 'ambiguous_candidates', slipId: inbox.slipId,
-    lineUserId });
-    return { ok:false, reason:'ambiguous' };
-  }
-
-  // 4) จับคู่ได้ → ตรวจ amount ก่อน จากนั้นค่อยอัปเดตบิล + ให้คะแนน
-  const cand = found.candidate;
-
-  const billAmt  = Number(cand.amountDue);
-  let   conf     = 0.70;   // baseline
-  let   amtDelta = null;
-
-  if (ocrOk && ocr.amount != null) {
-    amtDelta = Math.abs(Number(ocr.amount) - billAmt);
-
-    // STRICT rule (tune the 3 THB threshold as you like)
-    if (amtDelta > 3) {
-      updateInboxMatchResult_({
-        rowIndex: inbox.rowIndex,
-        status: 'amount_mismatch',
-        matchedBillId: cand.billId,
-        confidence: 0.4,
-        note: `OCR amount=${ocr.amount}; bill=${billAmt}; Δ=${amtDelta}`
-      });
-
-      enqueueReview_({
-        room, billId: cand.billId,
-        declaredAmount: ocr.amount,
-        amountDue: billAmt,
-        reason: 'amount_mismatch',
-        slipId: inbox.slipId,
-        note: 'blocked auto-match due to amount mismatch',
-        lineUserId // 👈 if you want to notify tenant later
-      });
-
-      // notify tenant + admin here (optional)
-      notifyTenantMismatch_(lineUserId, {
-        room,
-        billId: cand.billId,
-        amountDue: billAmt,
-        ocrAmount: ocr.amount,
-        delta: amtDelta,
-        slipId: inbox.slipId
-      });
-
-      // 👇 NEW: notify admin LINE group
-      adminNotify_(
-        '⚠️ ค่าเช่าไม่ตรงกับบิล\n' +
-        `🏠 ห้อง: ${room}\n` +
-        `🧾 บิล: ${cand.billId}\n` +
-        `💵 ยอดบิล: ${billAmt.toLocaleString()} บาท\n` +
-        `📑 จากสลิป: ${ocr.amount.toLocaleString()} บาท\n` +
-        `➖ ส่วนต่าง: ${amtDelta.toLocaleString()} บาท\n` +
-        `🆔 SlipID: ${inbox.slipId}`
-      );
-
-
-      sendLineNotify_(
-        `MM: Amount mismatch\nRoom: ${room}\nBill: ${cand.billId}\nBillAmt: ${billAmt}\nOCR: ${ocr.amount}\nΔ: ${amtDelta}\nSlip: ${inbox.slipId}`
-      );
-
-      return { ok:false, reason:'amount_mismatch' };
-    }
-
-    // amounts align → high confidence
-    conf = amtDelta < 0.5 ? 0.98 : 0.90;
-  }
-
-  if (ocrOk && ocr.txDate) {
-    const billMonth = String(cand.month || '');
-    const txMonth   = Utilities.formatDate(ocr.txDate, 'Asia/Bangkok', 'yyyy-MM');
-    if (billMonth === txMonth) conf = Math.min(0.99, conf + 0.02);
-  }
-
-  // ✅ Only AFTER passing checks, update the bill:
-  updateBillWithSlip_({
-    rowIndex: cand.rowIndex,
-    slipId: inbox.slipId,
-    markStatus: 'Slip Received'
-  });
-
-  updateInboxMatchResult_({
-    rowIndex: inbox.rowIndex,
-    status: 'matched',
-    matchedBillId: cand.billId,
-    confidence: conf,
-    note: (ocrOk ? `OCR OK; bank=${ocr.bank||''}; ref=${ocr.txId||''}` : 'matched (no/failed OCR)')
-  });
-
-  // 🔔 NEW: notify admin group with Approve/Reject buttons
-  notifyGroupPaymentMatched_({
-    room,
-    amountDue: cand.amountDue,
-    billId: cand.billId,
-    ocrAmount: (ocr && ocr.amount != null) ? Number(ocr.amount) : null,
-    slipId: inbox.slipId,
-    confidence: conf
-  });
-
-  return { ok:true, slipId: inbox.slipId, matchedBillId: cand.billId, amountDue: cand.amountDue };
-}
-
-function openRevenueSheetByName_(name) {
-  const ss = SpreadsheetApp.openById(REVENUE_SHEET_ID);
-  const sh = ss.getSheetByName(name);
-  if (!sh) throw new Error('Sheet not found in Revenue file: ' + name);
-  return sh;
-}
-
-
-/*************** 9) ADMIN / DIAGNOSTICS / TRIGGERS / NOTIFY ***************/
-function initAuth() {
-  const notes = [];
-
-  // Sheets access
-  SpreadsheetApp.openById(SHEET_ID).getSheets();
-  notes.push('Sheets OK');
-
-  // Slip folders (use the resolved IDs from your config)
-  DriveApp.getFolderById(TEMP_SLIP_FOLDER_ID).getName();
-  notes.push('TempSlip OK: ' + TEMP_SLIP_FOLDER_ID);
-
-  DriveApp.getFolderById(SLIP_FOLDER_ID).getName();
-  notes.push('FinalSlip OK: ' + SLIP_FOLDER_ID);
-
-  // Optional: ID folders if configured
-  if (ID_FOLDER_ID) {
-    try { DriveApp.getFolderById(ID_FOLDER_ID).getName(); notes.push('ID OK'); } catch (e) { notes.push('ID ERR'); throw e; }
-  }
-  if (TEMP_ID_FOLDER_ID) {
-    try { DriveApp.getFolderById(TEMP_ID_FOLDER_ID).getName(); notes.push('TempID OK'); } catch (e) { notes.push('TempID ERR'); throw e; }
-  }
-
-  Logger.log('initAuth success: ' + notes.join(', '));
-  return 'ok: ' + notes.join(', ');
-}
-
-function driveDiagnostics() {
-  Logger.log('SLIP_FOLDER_ID=' + SLIP_FOLDER_ID);
-  SpreadsheetApp.openById(SHEET_ID).getSheets();
-  Logger.log('Drive root OK: ' + DriveApp.getRootFolder().getName());
-  Logger.log('Slip folder OK: ' + DriveApp.getFolderById(SLIP_FOLDER_ID).getName());
-  // 🔸 NEW
-  try { Logger.log('ID folder OK: ' + DriveApp.getFolderById(ID_FOLDER_ID).getName()); } catch(e) {}
-  try { Logger.log('Temp ID folder OK: ' + DriveApp.getFolderById(TEMP_ID_FOLDER_ID).getName()); } catch(e) {}
-}
-
-function testOCRSlip() {
-  const testFileId = '1M4d4AVVB4EJ8JVxhXz5QPia6XYmYN3iC';  // <— ใส่ fileId จากข้อ 1
-  try {
-    const text = ocrSlipFromFileId_(testFileId);
-    Logger.log("=== OCR RESULT START ===");
-    Logger.log(text);
-    Logger.log("=== OCR RESULT END ===");
-  } catch (e) {
-    Logger.log("OCR ERROR: " + e);
-  }
-}
-
-/** Tell tenant their slip mismatched. */
-function notifyTenantMismatch_(userId, { room, billId, amountDue, ocrAmount, delta, slipId }) {
-  if (!userId) return;
-  const lines = [
-    '⚠️ ระบบตรวจพบว่ายอดสลิปไม่ตรงกับบิล',
-    room ? `ห้อง: ${room}` : '',
-    billId ? `บิล: ${billId}` : '',
-    amountDue != null ? `ยอดบิล: ${amountDue.toLocaleString('en-US',{minimumFractionDigits:2})} บาท` : '',
-    ocrAmount != null ? `ยอดจากสลิป: ${Number(ocrAmount).toLocaleString('en-US',{minimumFractionDigits:2})} บาท` : '',
-    delta != null ? `ต่างกัน: ${delta.toFixed(2)} บาท` : '',
-    slipId ? `รหัสสลิป: ${slipId}` : '',
-    '',
-    'กรุณาตรวจสอบหรือส่งสลิปใหม่อีกครั้งค่ะ'
-  ].filter(Boolean).join('\n');
-
-  pushMessage(userId, [{ type:'text', text: lines.slice(0,1200) }]);
-}
-
-/** Find Payments_Inbox row by SlipID. */
-function findInboxRowBySlipId_(slipId) {
-  const sh = openRevenueSheetByName_('Payments_Inbox');
-  const hdr = getHeaders_(sh);
-  const cSlipID = idxOf_(hdr, 'slipid');
-  if (cSlipID < 0) return null;
-  const vals = sh.getRange(2,1,Math.max(0, sh.getLastRow()-1), sh.getLastColumn()).getValues();
-  for (let i=0;i<vals.length;i++) {
-    if (String(vals[i][cSlipID]).trim() === String(slipId).trim()) return { rowIndex: i+2, headers: hdr };
-  }
-  return null;
-}
-
-/** Update a bill row to mark slip received (idempotent). */
-function setBillSlipReceived_(billId, slipId, statusText) {
-  const sh  = openRevenueSheetByName_('Horga_Bills');
-  const hdr = getHeaders_(sh);
-  const cBill   = idxOf_(hdr, 'billid');
-  const cStatus = idxOf_(hdr, 'status');
-  const cPaidAt = idxOf_(hdr, 'paidat');
-  const cSlipID = idxOf_(hdr, 'slipid');
-  if (cBill < 0) throw new Error('Horga_Bills missing BillID col');
-  const vals = sh.getRange(2,1,Math.max(0,sh.getLastRow()-1), sh.getLastColumn()).getValues();
-  for (let i=0;i<vals.length;i++) {
-    if (String(vals[i][cBill]).trim() === String(billId).trim()) {
-      if (cSlipID > -1) sh.getRange(i+2, cSlipID+1).setValue(slipId || '');
-      if (cPaidAt > -1) sh.getRange(i+2, cPaidAt+1).setValue(new Date());
-      if (cStatus > -1) sh.getRange(i+2, cStatus+1).setValue(statusText || 'Slip Received');
-      return i+2;
-    }
-  }
-  throw new Error('Bill not found: ' + billId);
-}
-
-/** Run once to install the onEdit trigger for the REVENUE_SHEET_ID file. */
-function setupReviewTriggers() {
-  // Remove old
-  ScriptApp.getProjectTriggers().forEach(t => {
-    if (t.getHandlerFunction() === 'onReviewQueueEdit_') ScriptApp.deleteTrigger(t);
-  });
-  // Create new
-  ScriptApp.newTrigger('onReviewQueueEdit_')
-    .forSpreadsheet(REVENUE_SHEET_ID)   // <-- same file where Review_Queue lives
-    .onEdit()
-    .create();
-}
-
-/** Trigger target: handles edits in Review_Queue. */
-function onReviewQueueEdit_(e) {
-  try {
-    const sheet = e.range.getSheet();
-    if (sheet.getParent().getId() !== REVENUE_SHEET_ID) return;
-    if (sheet.getName() !== 'Review_Queue') return;
-
-    const row = e.range.getRow();
-    if (row === 1) return; // header
-
-    const hdr = getHeaders_(sheet);
-    const get = (key) => {
-      const c = idxOf_(hdr, key);
-      return c > -1 ? sheet.getRange(row, c+1).getValue() : '';
-    };
-    const set = (key, val) => {
-      const c = idxOf_(hdr, key);
-      if (c > -1) sheet.getRange(row, c+1).setValue(val);
-    };
-
-    const decision   = String(get('Decision') || '').toUpperCase().trim();
-    if (!decision) return; // ignore other edits
-
-
-    const slipId     = String(get('SlipID') || '').trim();
-    const billId     = String(get('ApplyBillID') || get('BillID') || '').trim();
-    const adjAmt     = get('AdjustedAmount'); // optional
-    const userId     = String(get('LineUserID') || '').trim();
-
-    if (decision === 'APPROVE') {
-      // 1) Mark bill as Slip Received
-      setBillSlipReceived_(billId, slipId, 'Slip Received (Manual)');
-
-      // 2) Update Payments_Inbox row
-      const inbox = findInboxRowBySlipId_(slipId);
-      if (inbox) {
-        const shIn = openRevenueSheetByName_('Payments_Inbox');
-        const hIn  = inbox.headers;
-        const cSt  = idxOf_(hIn, 'matchstatus');
-        const cId  = idxOf_(hIn, 'matchedbillid');
-        const cCf  = idxOf_(hIn, 'confidence');
-        const cNt  = idxOf_(hIn, 'notes');
-        if (cSt > -1) shIn.getRange(inbox.rowIndex, cSt+1).setValue('approved_manual');
-        if (cId > -1) shIn.getRange(inbox.rowIndex, cId+1).setValue(billId);
-        if (cCf > -1) shIn.getRange(inbox.rowIndex, cCf+1).setValue(1.0);
-        if (cNt > -1) shIn.getRange(inbox.rowIndex, cNt+1).setValue(
-          `approved by admin${adjAmt ? '; adjAmt=' + Number(adjAmt) : ''}`
-        );
-      }
-
-      // 3) Close the review row
-      set('ResolvedAt', new Date());
-      set('Reason', 'approved_manual');
-      sendLineNotify_(`MM: Approved mismatch\nBill: ${billId}\nSlip: ${slipId}${adjAmt?`\nAdjAmt: ${adjAmt}`:''}`);
-      if (userId) pushMessage(userId, [{ type:'text', text:'✅ ยืนยันยอดเรียบร้อย ขอบคุณค่ะ' }]);
-    }
-
-    if (decision === 'REJECT') {
-      // 1) Update Payments_Inbox only
-      const inbox = findInboxRowBySlipId_(slipId);
-      if (inbox) {
-        const shIn = openRevenueSheetByName_('Payments_Inbox');
-        const hIn  = inbox.headers;
-        const cSt  = idxOf_(hIn, 'matchstatus');
-        const cCf  = idxOf_(hIn, 'confidence');
-        const cNt  = idxOf_(hIn, 'notes');
-        if (cSt > -1) shIn.getRange(inbox.rowIndex, cSt+1).setValue('rejected');
-        if (cCf > -1) shIn.getRange(inbox.rowIndex, cCf+1).setValue(0.0);
-        if (cNt > -1) shIn.getRange(inbox.rowIndex, cNt+1).setValue('rejected by admin');
-      }
-      // 2) Keep bill unpaid, close review
-      set('ResolvedAt', new Date());
-      set('Reason', 'rejected');
-      sendLineNotify_(`MM: Rejected mismatch\nBill: ${billId}\nSlip: ${slipId}`);
-      if (userId) pushMessage(userId, [{ type:'text', text:'❌ สลิปไม่ถูกต้อง กรุณาส่งสลิปใหม่ค่ะ' }]);
-    }
-  } catch (err) {
-    Logger.log('onReviewQueueEdit_ error: ' + err);
-    try { sendLineNotify_('MM error in onReviewQueueEdit_: ' + err); } catch(e){}
-  }
-}
-
-/** ส่งข้อความเข้า LINE Notify กลุ่ม */
-function sendLineNotify_(message) {
-  if (!LINE_NOTIFY_TOKEN) { Logger.log('NO LINE_NOTIFY_TOKEN'); return; }
-  const url = 'https://notify-api.line.me/api/notify';
-  UrlFetchApp.fetch(url, {
+  // 3) upload to api-data host (this was the issue)
+  const url = 'https://api-data.line.me/v2/bot/richmenu/' + richMenuId + '/content';
+  const res = UrlFetchApp.fetch(url, {
     method: 'post',
-    headers: { Authorization: 'Bearer ' + LINE_NOTIFY_TOKEN },
-    payload: { message: String(message || '') },
+    contentType: isPng ? 'image/png' : 'image/jpeg',
+    payload: bytes,
+    headers: { Authorization: 'Bearer ' + LINE_TOKEN },
     muteHttpExceptions: true
   });
-}
-
-/** ทดสอบแจ้งเตือน (กด Run ครั้งเดียวเพื่อเทสต์) */
-function testNotify() {
-  sendLineNotify_('✅ ทดสอบแจ้งเตือนจาก MM_LineWebhook สำเร็จ');
-}
-
-function pingGoogle() {
-  const r = UrlFetchApp.fetch('https://www.google.com', {muteHttpExceptions:true});
-  Logger.log('google.com %s', r.getResponseCode());
-}
-function pingLineHost() {
-  const r = UrlFetchApp.fetch('https://notify-api.line.me/api/notify', {muteHttpExceptions:true});
-  Logger.log('notify-api.line.me %s %s', r.getResponseCode(), r.getContentText().slice(0,60));
-}
-
-function alertAdminGroup_(text) {
-  if (!ADMIN_GROUP_ID) { Logger.log('NO ADMIN_GROUP_ID'); return; }
-  // ใช้ pushMessage() เดิมของโปรเจกต์ (มันเรียก /v2/bot/message/push อยู่แล้ว)
-  pushMessage(ADMIN_GROUP_ID, [{ type: 'text', text }]);
-}
-
-/** Send an admin alert to the OA group (preferred), fallback to LINE Notify if configured. */
-function adminNotify_(text) {
-  var msg = String(text || '').slice(0, 1200); // keep short
-  if (typeof ADMIN_GROUP_ID === 'string' && ADMIN_GROUP_ID) {
-    try {
-      pushMessage(ADMIN_GROUP_ID, [{ type: 'text', text: msg }]);
-      return;
-    } catch (e) {
-      Logger.log('adminNotify_ push error: ' + e);
-    }
+  Logger.log('UPLOAD -> ' + res.getResponseCode() + ' ' + res.getContentText());
+  if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) {
+    throw new Error('Upload failed: ' + res.getResponseCode() + ' ' + res.getContentText());
   }
-  // optional fallback if you also configured LINE_NOTIFY_TOKEN
-  try { sendLineNotify_(msg); } catch (e) { Logger.log('adminNotify_ notify error: ' + e); }
+  Logger.log('✅ Upload OK for ' + richMenuId + ' (not linked to anyone)');
+  return richMenuId;
 }
 
-function testAdminNotify() { adminNotify_('✅ Test from Apps Script'); }
+function uploadTenantMenuImage() {
+  return uploadTenantMenuImageTo_(RICHMENU_ID_RAW);
+}
 
-/** Push a Flex card to the admin LINE group with Approve/Reject buttons. */
-function notifyGroupPaymentMatched_({ room, amountDue, billId, ocrAmount, slipId, confidence }) {
-  if (!ADMIN_GROUP_ID) { Logger.log('NO ADMIN_GROUP_ID'); return; }
+function createAndUploadTenantMenu_() {
+  const richMenuId = createTenantPaidRichMenu_();
+  if (!richMenuId) throw new Error('Rich menu creation failed');
+  uploadTenantMenuImageTo_(richMenuId);
+  Logger.log('🎯 New tenant menu ready: ' + richMenuId + ' — update PAID_MENU_ID & RICHMENU_ID_RAW');
+  return richMenuId;
+}
 
-  const title = '💵 Payment Received';
-  const lines = [
-    `Room: ${room || '-'}`,
-    `Bill: ${billId || '-'}`,
-    `Amount (Bill): ${amountDue != null ? Number(amountDue).toLocaleString() : '-'}`,
-    `OCR Amount: ${ocrAmount != null ? Number(ocrAmount).toLocaleString() : '-'}`,
-    `Confidence: ${confidence != null ? (Math.round(confidence*100) + '%') : '-'}`,
-    slipId ? `SlipID: ${slipId}` : ''
-  ].filter(Boolean);
+/**************** HELPERS ****************/
+function RICH(raw){ const s = String(raw||'').trim(); return s.startsWith('richmenu-') ? s : 'richmenu-' + s; }
+function fetchL(url,opt){
+  const res = UrlFetchApp.fetch(url, Object.assign({
+    headers: { Authorization: 'Bearer ' + LINE_TOKEN },
+    muteHttpExceptions: true
+  }, opt||{}));
+  Logger.log((opt&&opt.method||'get') + ' ' + url + ' -> ' + res.getResponseCode());
+  return res;
+}
 
-  const approveData = `act=mgr_approve&bill=${encodeURIComponent(billId||'')}&slip=${encodeURIComponent(slipId||'')}&room=${encodeURIComponent(room||'')}`;
-  const rejectData  = `act=mgr_reject&bill=${encodeURIComponent(billId||'')}&slip=${encodeURIComponent(slipId||'')}&room=${encodeURIComponent(room||'')}`;
+/**************** CHECK-IN FEE (WEEK-AHEAD NOTICE) ****************/
+const CHECKIN_NOTICE = {
+  ADVANCE_DAYS: 7,
+  ROUND_TO: 10,
+  DEPOSIT_NET: 3000,      // 5,000 - 2,000 = 3,000
+  FRIDGE_FEE: 200,        // per month
+  CAR_PARKING: {          // normalize แล้วจะ map มาที่คีย์พวกนี้
+    'car_roof': 800,      // มีหลังคา
+    'car_noroof': 500,    // ไม่มีหลังคา
+  },
+  ROOMS_SHEET: 'Rooms',
+  COLS: {
+    roomId: 'RoomID',
+    lineId: 'Line ID',
+    price: 'ราคาห้อง',
+    fridge: 'Fridge',
+    parking: 'Parking',
+    checkinDate: 'CheckinDate',
+    checkinTime: 'CheckinTime',
+    checkinConfirmed: 'CheckinConfirmed',
+    sentWeek: 'ReminderSent_Week',
+    sentWeekAt: 'ReminderSentAt_Week',
+  }
+};
 
-  const flex = {
-    type: 'flex',
-    altText: `${title} • ${room || ''} • ${billId || ''}`,
-    contents: {
-      type: 'bubble',
-      header: {
-        type: 'box',
-        layout: 'vertical',
-        contents: [{ type: 'text', text: title, weight: 'bold', size: 'lg' }]
-      },
-      body: {
-        type: 'box',
-        layout: 'vertical',
-        spacing: 'sm',
-        contents: lines.map(t => ({ type: 'text', text: t, wrap: true, size: 'sm' }))
-      },
-      footer: {
-        type: 'box',
-        layout: 'horizontal',
-        spacing: 'md',
-        contents: [
-          { type: 'button', style: 'primary', color: '#22c55e',
-            action: { type: 'postback', label: '✅ Approve', data: approveData } },
-          { type: 'button', style: 'secondary',
-            action: { type: 'postback', label: '❌ Reject', data: rejectData } }
-        ]
-      }
-    }
+function _findColStrict_(headers, name) {
+  const idx = headers.indexOf(name);
+  if (idx < 0) throw new Error('Missing column: ' + name);
+  return idx + 1;
+}
+function _daysInMonth_(d){ return new Date(d.getFullYear(), d.getMonth()+1, 0).getDate(); }
+function _firstMonthUsedDays_(checkinDate){
+  const dim = _daysInMonth_(checkinDate);
+  return dim - checkinDate.getDate() + 1; // รวมวันเช็คอิน
+}
+function _roundUp_(num, to){ return Math.ceil(num / to) * to; }
+function _fmtBaht_(n){ return Number(n||0).toLocaleString('th-TH', {maximumFractionDigits:0}); }
+function _thaiDate_(d){ return Utilities.formatDate(d, 'Asia/Bangkok', 'dd MMM yyyy'); }
+
+// แปลงค่าที่จอดรถใน Rooms ให้มาอยู่ในชุดคีย์ที่รองรับ
+function _normalizeCarParking_(txt) {
+  const parsed = _parseParkingCellValue_(txt);
+  if (!parsed.wantsParking) return '';
+  if (parsed.plan === 'roofed') return 'car_roof';
+  if (parsed.plan === 'open') return 'car_noroof';
+  return ''; // default = ไม่คิดเงินเพิ่ม
+}
+
+// แปลงค่าตู้เย็นให้เป็น boolean
+function _hasFridge_(txt) {
+  const t = String(txt||'').trim().toLowerCase();
+  return ['yes','true','1','มี','y'].includes(t);
+}
+
+// คำนวณยอดเดือนแรก (พรอเรต + ประกัน + ที่จอด + ตู้เย็น)
+function computeCheckinBill_(rentPerMonth, checkinDate, parkingRaw, fridgeRaw) {
+  const dim = _daysInMonth_(checkinDate);
+  const used = _firstMonthUsedDays_(checkinDate);
+  const daily = rentPerMonth / dim;
+
+  const prorated = _roundUp_(daily * used, CHECKIN_NOTICE.ROUND_TO);
+  const deposit  = CHECKIN_NOTICE.DEPOSIT_NET;
+
+  const parkingKey = _normalizeCarParking_(parkingRaw);
+  const parkingFee = CHECKIN_NOTICE.CAR_PARKING[parkingKey] || 0;
+
+  const fridgeFee = _hasFridge_(fridgeRaw) ? CHECKIN_NOTICE.FRIDGE_FEE : 0;
+
+  const total = prorated + deposit + parkingFee + fridgeFee;
+
+  return {
+    dim, used,
+    dailyRoundedHint: Math.ceil(daily),  // สำหรับโชว์ ~บาท/วัน
+    prorated, deposit, parkingFee, fridgeFee, total
   };
-
-  pushMessage(ADMIN_GROUP_ID, [flex]);
 }
 
-function testGroupApproveCard() {
-  notifyGroupPaymentMatched_({
-    room: 'A101',
-    amountDue: 3800,
-    billId: '2025-09-A101',
-    ocrAmount: 3800,
-    slipId: 'SLIP-TEST-1234',
-    confidence: 0.98
-  });
+/**
+ * First-month charge (silent policy):
+ * - Nov–Dec 2025 → prorate (uses computeCheckinBill_)
+ * - 2026+        → full month rent + deposit + add-ons (no prorate)
+ *
+ * Returns a normalized object with fields you already use in messages:
+ * { mode, prorated, deposit, parkingFee, fridgeFee, total, used, dim, dailyRoundedHint }
+ */
+function computeFirstMonthBill_(rentPerMonth, checkinDate, parkingRaw, fridgeRaw) {
+  const rentValue = Number(rentPerMonth) || 0;
+  const halfRent = _roundUp_(rentValue / 2, CHECKIN_NOTICE.ROUND_TO);
+  const deposit = CHECKIN_NOTICE.DEPOSIT_NET;
+  const parkingKey = _normalizeCarParking_(parkingRaw);
+  const parkingFee = CHECKIN_NOTICE.CAR_PARKING[parkingKey] || 0;
+  const fridgeFee  = _hasFridge_(fridgeRaw) ? CHECKIN_NOTICE.FRIDGE_FEE : 0;
+
+  if (!_isFullMonthEra_(checkinDate)) {
+    // ก่อน 1 ม.ค. 2026 → เก็บครึ่งเดือนตายตัว
+    const totalHalf = halfRent + deposit + parkingFee + fridgeFee;
+    return {
+      mode: 'half_prorate',
+      prorated: halfRent,
+      deposit,
+      parkingFee,
+      fridgeFee,
+      total: totalHalf,
+      used: null, dim: null, dailyRoundedHint: null
+    };
+  }
+
+  // 1 ม.ค. 2026 เป็นต้นไป → ปกติเต็มเดือน แต่ถ้าเข้าอยู่หลังวันที่ 15 เก็บครึ่งเดือน
+  const lateCheckin = checkinDate.getDate() > 15;
+  const rentComponent = lateCheckin ? halfRent : rentValue;
+  const total = rentComponent + deposit + parkingFee + fridgeFee;
+
+  return {
+    mode: lateCheckin ? 'half_full' : 'full',
+    prorated: rentComponent,
+    deposit,
+    parkingFee,
+    fridgeFee,
+    total,
+    used: null, dim: null, dailyRoundedHint: null
+  };
 }
 
-function handleMoveoutFromWorker_(data) {
-  try {
-    const roomId  = String(data.roomId || '').toUpperCase().trim();
-    const dateISO = String(data.dateISO || '').trim(); // YYYY-MM-DD
-    const userId  = String(data.lineUserId || '').trim();
 
-    console.log('MOVEOUT_START', JSON.stringify({ roomId, dateISO, userId }));
+function sendWeekAheadCheckinFees() {
+  const ss = SpreadsheetApp.openById(SHEET_ID);
+  const sh = ss.getSheetByName(CHECKIN_NOTICE.ROOMS_SHEET);
+  if (!sh) throw new Error('Rooms not found');
 
-    if (!roomId || !dateISO) throw new Error('missing room/date');
+  const headers = sh.getRange(1,1,1, sh.getLastColumn()).getValues()[0].map(h=>String(h||'').trim());
+  const cRoom   = _findColStrict_(headers, CHECKIN_NOTICE.COLS.roomId);
+  const cLine   = _findColStrict_(headers, CHECKIN_NOTICE.COLS.lineId);
+  const cPrice  = _findColStrict_(headers, CHECKIN_NOTICE.COLS.price);
+  const cPark   = _findColStrict_(headers, CHECKIN_NOTICE.COLS.parking);
+  const cFridge = _findColStrict_(headers, CHECKIN_NOTICE.COLS.fridge);
+  const cDate   = _findColStrict_(headers, CHECKIN_NOTICE.COLS.checkinDate);
+  const cTime   = headers.indexOf(CHECKIN_NOTICE.COLS.checkinTime) + 1;         // optional
+  const cConf   = headers.indexOf(CHECKIN_NOTICE.COLS.checkinConfirmed) + 1;    // optional
+  let   cSent   = headers.indexOf(CHECKIN_NOTICE.COLS.sentWeek) + 1;            // create if missing
+  let   cSentAt = headers.indexOf(CHECKIN_NOTICE.COLS.sentWeekAt) + 1;
 
-    const ss = SpreadsheetApp.openById(SHEET_ID);
+  // สร้างคอลัมน์ ReminderSent_Week/ReminderSentAt_Week อัตโนมัติถ้าไม่มี
+  if (!cSent)   { sh.insertColumnAfter(headers.length); cSent   = headers.length+1; sh.getRange(1,cSent).setValue(CHECKIN_NOTICE.COLS.sentWeek); headers.push(CHECKIN_NOTICE.COLS.sentWeek); }
+  if (!cSentAt) { sh.insertColumnAfter(headers.length); cSentAt = headers.length+1; sh.getRange(1,cSentAt).setValue(CHECKIN_NOTICE.COLS.sentWeekAt); headers.push(CHECKIN_NOTICE.COLS.sentWeekAt); }
 
-    // 1) Append to Moveouts log
-    let sh = ss.getSheetByName('Moveouts');
-    if (!sh) sh = ss.insertSheet('Moveouts');
-    if (sh.getLastRow() === 0) {
-      sh.appendRow(['Timestamp','Room','MoveoutDate','LineUserId','Status','Note']);
-    }
-    sh.appendRow([new Date(), roomId, dateISO, userId, 'PENDING', 'via Edge']);
-    console.log('MOVEOUT_LOGGED');
+  const rows = sh.getLastRow() - 1;
+  if (rows < 1) return 'No data rows';
+  const rng  = sh.getRange(2,1, rows, sh.getLastColumn());
+  const vals = rng.getValues();
+  const out  = vals.map(r => r.slice());
 
-    // 2) Update Rooms
-    const rooms = ss.getSheetByName('Rooms');
-    if (!rooms) throw new Error('Rooms sheet not found');
+  const token = PropertiesService.getScriptProperties().getProperty('LINE_TOKEN');
+  if (!token) throw new Error('Missing LINE_TOKEN');
 
-    const values  = rooms.getDataRange().getValues();
-    const headers = values[0].map(h => String(h || '').trim());
+  const tz = 'Asia/Bangkok';
+  const today = new Date(); today.setHours(0,0,0,0);
+  const ymdToday = _ymd_(today, tz);
 
-    // exact-name indices (your sheet matches these)
-    const idxRoom    = colEq_(headers, 'RoomId');
-    const idxStatus  = colEq_(headers, 'Status');
-    const idxMoveout = colEq_(headers, 'Move-out Date');
-    const idxNext    = colEq_(headers, 'Next Available');
+  let sent = 0, skipped = 0;
 
-    console.log('ROOMS_COLIDX', JSON.stringify({ idxRoom, idxStatus, idxMoveout, idxNext, headerCount: headers.length }));
+  for (let i=0;i<vals.length;i++){
+    const row = vals[i];
+    const lineId = String(row[cLine-1]||'').trim();
+    const roomId = String(row[cRoom-1]||'').trim();
+    const price  = Number(row[cPrice-1]||0);
+    const ckd    = row[cDate-1];
 
-    if (idxRoom === -1 || idxStatus === -1) {
-      throw new Error('Missing columns RoomId/Status in Rooms');
-    }
+    if (!lineId || !roomId || !price || !(ckd instanceof Date)) { skipped++; continue; }
 
-    let updated = false;
-    for (let r = 1; r < values.length; r++) {
-      const id = String(values[r][idxRoom] || '').toUpperCase().trim();
-      if (id === roomId) {
-        if (idxStatus  > -1) rooms.getRange(r + 1, idxStatus  + 1).setValue('soon');
-        if (idxMoveout > -1) rooms.getRange(r + 1, idxMoveout + 1).setValue(dateISO);
-        if (idxNext    > -1) {
-          const dt = new Date(dateISO);
-          dt.setDate(dt.getDate() + 1);
-          rooms.getRange(r + 1, idxNext + 1).setValue(dt);
-        }
-        console.log('ROOMS_UPDATED_EXISTING_ROW', r + 1);
-        updated = true;
-        break;
-      }
-    }
+    // ถ้ามีคอลัมน์ Confirmed ให้ส่งเฉพาะคนที่ confirm แล้ว
+    if (cConf && !row[cConf-1]) { skipped++; continue; }
 
-    if (!updated) {
-      const newRow = new Array(headers.length).fill('');
-      if (idxRoom   > -1) newRow[idxRoom]   = roomId;
-      if (idxStatus > -1) newRow[idxStatus] = 'soon';
-      if (idxMoveout> -1) newRow[idxMoveout]= dateISO;
-      if (idxNext   > -1) {
-        const dt = new Date(dateISO);
-        dt.setDate(dt.getDate() + 1);
-        newRow[idxNext] = dt;
-      }
-      rooms.appendRow(newRow);
-      console.log('ROOMS_APPENDED_NEW_ROW');
-      updated = true;
-    }
+    // กันยิงซ้ำแบบผูกกับ "CheckinDate ปัจจุบัน"
+    const sentMark = String(row[cSent-1]||'').trim(); // expected = 'yyyy-MM-dd'
+    const ymdTarget = _ymd_(ckd, tz);
+    if (sentMark === ymdTarget) { skipped++; continue; }
 
-    // 3) Optional tenant notify (push)
-    if (userId) {
-      try {
-        pushMessage(userId, [{
-          type: 'text',
-          text: `✅ รับคำขอแจ้งออกแล้ว\nห้อง ${roomId}\nวันย้ายออก: ${dateISO}`
-        }]);
-      } catch (e) {
-        console.log('TENANT_PUSH_SKIP', e);
-      }
-    }
+    const target = new Date(ckd); target.setHours(0,0,0,0);
+    const remind = new Date(target); remind.setDate(remind.getDate() - CHECKIN_NOTICE.ADVANCE_DAYS);
+    if (_ymd_(remind, tz) !== ymdToday) { skipped++; continue; }
 
-    console.log('MOVEOUT_DONE', updated);
-    return updated;
-  } catch (err) {
-    console.error('MOVEOUT_ERR', err);
-    return false;
-  }
-}
+    // คำนวณ
+    const calc = computeFirstMonthBill_(price, target, row[cPark-1], row[cFridge-1]);
 
-function handleTextPush_(event) {
-  const userId   = event.source?.userId || '';
-  const userText = (event.message?.text || '').trim();
-  if (!userId || !userText) return;
+    const msg = _weekAheadMessage_(roomId, target, calc);
 
-  // (0) Move-out magic link (with loading + button)
-  if (/^\s*แจ้งออก\s*$/i.test(userText)) {
-    // show the chat loading spinner immediately (7s max per API)
-    // pushWithLoading() starts the spinner then sends the message
-    const room = findRoomByLineId_(userId);
-    const tok  = issueToken_(userId, room, 20, 'moveout');
-
-    // ensure trailing slash before adding ?t=
-    const base = /\/$/.test(FRONTEND_BASE) ? FRONTEND_BASE : (FRONTEND_BASE + '/');
-    const url  = base + '?t=' + encodeURIComponent(tok);
-
-    return pushWithLoading(userId, [{
-      type: 'template',
-      altText: 'ฟอร์มแจ้งย้ายออก',
-      template: {
-        type: 'buttons',
-        text: 'กดปุ่มเพื่อเปิดฟอร์มแจ้งย้ายออก\n(ลิงก์ใช้ครั้งเดียว ภายใน 20 นาที)',
-        actions: [
-          { type: 'uri', label: 'เปิดฟอร์มแจ้งย้ายออก', uri: url }
-        ]
-      }
-    }], 7); // spinner duration (seconds)
-  }
-
-
-  // (A) Pay-rent keywords
-  if (/^(ชำระค่าเช่า|จ่ายค่าเช่า|pay\s*rent|ค่าเช่า)$/i.test(userText)) {
-    const cache = CacheService.getUserCache();
-    cache.put(userId + ':rent_flow', JSON.stringify({ step: 'await_room' }), 2 * 60 * 60);
-    return pushWithLoading(userId, [{ type:'text', text:'พิมพ์เบอร์ห้องของคุณ (เช่น A101)' }], 5);
-  }
-
-  // (B) Booking code
-  const m = userText.match(/^#?\s*MM\d{3,}$/i);
-  if (!m) return;
-
-  const codeDisplay = m[0].toUpperCase().replace(/\s/g, '');
-  const codeKey     = codeDisplay.replace(/^#/, '');
-
-  // 🔒 Debounce: avoid duplicate “กำลังตรวจสอบ…” for the same user+code within 15s
-  const cache = CacheService.getUserCache();
-  const debKey = `${userId}:checking:${codeKey}`;
-  if (!cache.get(debKey)) {
-    pushMessage(userId, [{ type:'text', text:'⏳ กำลังตรวจสอบรหัสจอง…' }]);
-    safeStartLoading(userId, 6);
-    cache.put(debKey, '1', 15); // 15 seconds TTL
-  }
-
-  const row = findBookingRow(codeKey);
-  if (!row) {
-    return pushMessage(userId, [{ type:'text', text:'ไม่พบข้อมูลรหัสนี้' }]);
-  }
-
-  return pushMessage(userId, [{
-    type:'template',
-    altText:'ยืนยันการจอง',
-    template:{
-      type:'buttons',
-      text:([
-        `รหัส: ${codeDisplay}`,
-        `ห้อง: ${row.roomId || '-'}`,
-        `ชื่อ: ${row.name}`
-      ].join('\n')).slice(0,160),
-      actions:[ { type:'postback', label:'ยืนยัน', data:'act=confirm&code='+codeKey } ]
-    }
-  }]);
-}
-
-function send_(event, messages, withLoadingSecs) {
-  const userId     = event.source?.userId || '';
-  const replyToken = event.replyToken;
-  const secs       = withLoadingSecs || 5;
-
-  // Try REPLY first (works for native LINE webhooks)
-  if (replyToken) {
     try {
-      const url = 'https://api.line.me/v2/bot/message/reply';
-      const res = UrlFetchApp.fetch(url, {
+      UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
         method: 'post',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + CHANNEL_ACCESS_TOKEN
-        },
-        payload: JSON.stringify({ replyToken, messages }),
+        headers: { 'Content-Type':'application/json; charset=UTF-8', Authorization:'Bearer '+token },
+        payload: JSON.stringify({ to: lineId, messages: [{ type:'text', text: msg }] }),
         muteHttpExceptions: true
       });
-      const code = res.getResponseCode();
-      Logger.log('REPLY_TRY code=%s body=%s', code, res.getContentText());
-      if (code >= 200 && code < 300) return; // success → we're done
-    } catch (e) {
-      Logger.log('REPLY_TRY error: ' + e);
-      // fall through to push
+
+      // after LINE push succeeded
+const monthStr = Utilities.formatDate(target, tz, 'yyyy-MM');
+const billId = 'CHKIN-' + Utilities.formatDate(target, tz, 'yyyyMMdd') + '-' + roomId;
+const tenant  = _getTenantNameByRoom_(roomId) || '';    // best effort from Rooms
+const account = getAccountFromRoom_(roomId);            // your mapping logic
+const chargeItems = _chargeItemsFromCalc_(calc);
+
+// Upsert into prediction sheet (safe sandbox for reconciliation)
+_upsertHorgaBill_('Horga_Bills', {
+  BillID: billId,
+  Room: roomId,
+  Tenant: tenant,
+  Month: monthStr,
+  AmountDue: calc.total,
+  DueDate: _ymd_(target, tz),
+  Status: 'Unpaid',
+  PaidAt: '',
+  SlipID: '',
+  Account: account,
+  ChargeItems: chargeItems,
+  Notes: 'Week-ahead first-month bill (auto)'
+});
+
+
+      out[i][cSent-1]   = ymdTarget; 
+      out[i][cSentAt-1] = new Date();
+      sent++;
+      Utilities.sleep(120);
+    } catch(e) {
+      Logger.log('Week-ahead push failed for '+roomId+' -> '+e);
     }
   }
 
-  // Fallback PUSH (works for Worker-forwarded events)
-  if (userId) return pushWithLoading(userId, messages, secs);
+  rng.setValues(out);
+  const res = `sendWeekAheadCheckinFees: sent=${sent}, skipped=${skipped}, scanned=${vals.length}`;
+  Logger.log(res);
+  return res;
 }
 
+function _ymd_(d, tz) {
+  return Utilities.formatDate(new Date(d.getFullYear(), d.getMonth(), d.getDate()), tz || 'Asia/Bangkok', 'yyyy-MM-dd');
+}
+
+// Floor → Account mapping
+function getAccountFromRoom_(roomId) {
+  // Normalize like "B504" / "A1203" / "C206" / "B 504" → "B504"
+  const roomUpper = String(roomId || '').toUpperCase().replace(/\s+/g, '');
+  if (!roomUpper) return '';
+
+  // Optional letters at start, then capture the FIRST digit = floor
+  // e.g. B504 → '5', A1203 → '1', 305 → '3'
+  const m = roomUpper.match(/^[A-Z]*(\d)/);
+  if (!m || !m[1]) return '';
+
+  switch (m[1]) {
+    case '1': return 'KKK+';
+    case '2': return 'TMK+';
+    case '3': return 'KGSI';
+    case '4': return 'KBIZ';
+    case '5': return 'KBIZ';
+    default:  return '';        // floors 0, 6, 7, ... → no account
+  }
+}
+
+
+function testWeekAhead_MyRoom() {
+  return testWeekAheadForRoom('B504'); // <-- put YOUR RoomID here
+}
+
+
+/** สำหรับเทสต์ห้องเดียวแบบ manual */
+function testWeekAheadForRoom(roomId){
+  const { sh, H } = _roomsHeaders_();
+  const cRoom = H.indexOf('RoomID') + 1;
+  const cDate = H.indexOf('CheckinDate') + 1;
+  for (let i=2;i<=sh.getLastRow();i++){
+    if (String(sh.getRange(i,cRoom).getValue()).trim().toUpperCase() === roomId.toUpperCase()){
+      const d = new Date(); d.setDate(d.getDate() + CHECKIN_NOTICE.ADVANCE_DAYS);
+      sh.getRange(i, cDate).setValue(d);
+      return sendWeekAheadCheckinFees();
+    }
+  }
+  throw new Error('Room not found: '+roomId);
+}
+
+
+// ล้างธง ReminderSent_Week สำหรับห้องเดียว (ใช้ตอนอยากรันทดสอบซ้ำ)
+function clearWeekAheadFlagsForRoom(roomId) {
+  const { sh, H } = _roomsHeaders_();
+  const cRoom   = H.indexOf('RoomID') + 1;
+  const cSent   = H.indexOf('ReminderSent_Week') + 1;
+  const cSentAt = H.indexOf('ReminderSentAt_Week') + 1;
+  if (!cRoom) throw new Error('RoomID col not found');
+  if (!cSent && !cSentAt) return 'No week flags found';
+
+  const vals = sh.getRange(2,1, sh.getLastRow()-1, sh.getLastColumn()).getValues();
+  for (let i=0;i<vals.length;i++){
+    if (String(vals[i][cRoom-1]||'').trim().toUpperCase() === String(roomId).toUpperCase()){
+      if (cSent)   sh.getRange(i+2, cSent).setValue('');
+      if (cSentAt) sh.getRange(i+2, cSentAt).setValue('');
+      return 'Cleared for ' + roomId;
+    }
+  }
+  return 'Room not found: ' + roomId;
+}
+
+
+function _weekAheadRentLine_(calc) {
+  const rentValue = _fmtBaht_(calc.prorated);
+  switch (calc.mode) {
+    case 'full':
+      return `• 🏠 ค่าเช่าเต็มเดือน: ${rentValue} บ.`;
+    case 'half_full':
+      return `• 🏠 ค่าเช่า (ครึ่งเดือน เพราะเช็คอินหลังวันที่ 15): ${rentValue} บ.`;
+    case 'half_prorate':
+      return `• 🏠 ค่าเช่า (ครึ่งเดือนตามนโยบายปี 2025): ${rentValue} บ.`;
+    default: {
+      const hasProrateDetail = calc.used && calc.dim && calc.dailyRoundedHint;
+      if (hasProrateDetail) {
+        return `• 🏠 ค่าเช่าพรอเรต: ${rentValue} บ.  (อยู่ ${calc.used} วัน ~${_fmtBaht_(calc.dailyRoundedHint)}/วัน จาก ${calc.dim} วัน)`;
+      }
+      return `• 🏠 ค่าเช่า: ${rentValue} บ.`;
+    }
+  }
+}
+
+function _weekAheadMessage_(roomId, targetDate, calc) {
+  const GAP = '\u200B'; // keeps line spacing in LINE
+  const depositLabel = 'ค่าประกัน (5000 - ค่าจอง2000)';
+
+  const lines = [
+    `เรียนลูกค้า ห้อง ${roomId} 🙏`,
+    `ใกล้ถึงวันเช็คอินแล้ว 🗓️ (${_thaiDate_(targetDate)})`,
+    GAP,
+
+    `ยอดต้องเตรียมสำหรับเดือนแรก (ปัดขึ้นหลักสิบ):`,
+    _weekAheadRentLine_(calc),
+    `• 🔒 ${depositLabel}: ${_fmtBaht_(calc.deposit)} บ.`,
+    (calc.parkingFee ? `• 🚗 ค่าที่จอดรถ: ${_fmtBaht_(calc.parkingFee)} บ.` : null),
+    (calc.fridgeFee  ? `• 🧊 ค่าเช่าตู้เย็น: ${_fmtBaht_(calc.fridgeFee)} บ.` : null),
+    GAP,
+
+    `💳 รวมที่ต้องชำระวันเข้าอยู่: **${_fmtBaht_(calc.total)} บ.**`,
+    GAP,
+
+    `🧾 เอกสารที่ต้องเตรียม: บัตรประชาชนตัวจริงและสำเนา 1 ชุด`,
+    `✏️ หากต้องการเปลี่ยนวัน/เวลาเช็คอิน พิมพ์ "เปลี่ยนวันเช็คอิน" ได้เลย`
+  ];
+
+  return lines.filter(v => v !== null).join('\n'); // keep GAP/empty lines
+}
+
+
+
+function forceSendFull2026ToMe(){
+  const MY_LINE_USER_ID = 'Ue90558b73d62863e2287ac32e69541a3'; // <- yours
+  const roomId = 'B504';
+  const d = new Date('2026-01-03T00:00:00+07:00');
+
+  const { sh, H } = _roomsHeaders_();
+  const cRoom   = H.indexOf(CHECKIN_NOTICE.COLS.roomId) + 1;
+  const cPrice  = H.indexOf(CHECKIN_NOTICE.COLS.price) + 1;
+  const cPark   = H.indexOf(CHECKIN_NOTICE.COLS.parking) + 1;
+  const cFridge = H.indexOf(CHECKIN_NOTICE.COLS.fridge) + 1;
+
+  const vals = sh.getRange(2,1, sh.getLastRow()-1, sh.getLastColumn()).getValues();
+  for (let i=0;i<vals.length;i++){
+    if (String(vals[i][cRoom-1]||'').trim().toUpperCase() === roomId.toUpperCase()){
+      const price  = Number(vals[i][cPrice-1]||0);
+      const park   = vals[i][cPark-1];
+      const fridge = vals[i][cFridge-1];
+      const calc   = computeFirstMonthBill_(price, d, park, fridge);
+      const msg    = _weekAheadMessage_(roomId, d, calc);
+
+      // push to YOU (not the tenant), no flags written
+      UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
+        method: 'post',
+        headers: { 'Content-Type':'application/json; charset=UTF-8', Authorization:'Bearer '+LINE_TOKEN },
+        payload: JSON.stringify({ to: MY_LINE_USER_ID, messages: [{ type:'text', text: msg }] }),
+        muteHttpExceptions: true
+      });
+      return 'Sent preview to me for ' + roomId;
+    }
+  }
+  throw new Error('Room not found: ' + roomId);
+}
+
+const HORGA_SCHEMA = [
+  'BillID','Room','Tenant','Month','AmountDue','DueDate',
+  'Status','PaidAt','SlipID','Account','ChargeItems','Notes'
+];
+
+// generic: ensure sheet exists in a specific spreadsheet
+function _ensureSheetWithHeaderIn_(spreadsheetId, sheetName, schema) {
+  const ss = SpreadsheetApp.openById(spreadsheetId);
+  let sh = ss.getSheetByName(sheetName);
+  if (!sh) {
+    sh = ss.insertSheet(sheetName);
+    sh.getRange(1,1,1,schema.length).setValues([schema]);
+  } else if (sh.getLastRow() < 1) {
+    sh.getRange(1,1,1,schema.length).setValues([schema]);
+  } else {
+    const head = sh.getRange(1,1,1, Math.max(schema.length, sh.getLastColumn())).getValues()[0];
+    const same = schema.every((h,i)=> String(head[i]||'') === h);
+    if (!same) sh.getRange(1,1,1,schema.length).setValues([schema]);
+  }
+  return sh;
+}
+
+// ✅ Single source of truth: always write to Revenue Master / Horga_Bills
+function _upsertHorgaBill_(sheetName, billObj) {
+  const sh = _ensureSheetWithHeaderIn_(REVENUE_MASTER_ID, sheetName, HORGA_SCHEMA);
+
+  // map BillID -> row
+  const last = sh.getLastRow();
+  const idCol = 1; // A
+  let hit = 0;
+  if (last > 1) {
+    const ids = sh.getRange(2, idCol, last-1, 1).getValues().map(r => String(r[0]||'').trim());
+    const target = String(billObj.BillID||'').trim();
+    const idx = target ? ids.findIndex(v => v === target) : -1;
+    if (idx >= 0) hit = idx + 2;
+  }
+  const rowArr = HORGA_SCHEMA.map(k => billObj[k] != null ? billObj[k] : '');
+  if (hit) {
+    sh.getRange(hit, 1, 1, HORGA_SCHEMA.length).setValues([rowArr]);
+    return { action: 'updated', row: hit };
+  } else {
+    sh.appendRow(rowArr);
+    return { action: 'inserted', row: sh.getLastRow() };
+  }
+}
+
+
+// Try to get a tenant name from Rooms (best-effort)
+function _getTenantNameByRoom_(roomId) {
+  const { sh, H, Hl } = _roomsHeaders_();
+  const cRoom = Hl.findIndex(h => h.includes('room')) + 1;
+  if (!cRoom) return '';
+
+  const nameAliases = [
+    'hg name','horganice name','ชื่อลูกค้า','ลูกค้า','tenant',
+    'fullname','full name','ชื่อ','ชื่อ-สกุล'
+  ];
+  let cName = 0;
+  for (const a of nameAliases) {
+    const j = Hl.findIndex(h => h.indexOf(String(a).toLowerCase()) !== -1) + 1;
+    if (j) { cName = j; break; }
+  }
+  if (!cName) return '';
+
+  const rows = sh.getLastRow() - 1;
+  if (rows < 1) return '';
+  const vals = sh.getRange(2,1,rows, sh.getLastColumn()).getValues();
+  for (let i=0;i<vals.length;i++){
+    const id = String(vals[i][cRoom-1]||'').trim();
+    if (id.toUpperCase() === String(roomId).toUpperCase()) {
+      return String(vals[i][cName-1]||'').trim();
+    }
+  }
+  return '';
+}
+
+// Turn your calc object into a compact "ChargeItems" string
+function _chargeItemsFromCalc_(calc) {
+  const parts = [];
+  if (calc.mode === 'full') {
+    parts.push(`FirstMonthRent ${calc.prorated||0}`);
+  } else {
+    parts.push(`ProratedRent ${calc.prorated||0}`);
+  }
+  parts.push(`DepositNet ${calc.deposit||0}`);
+  if (calc.parkingFee) parts.push(`Parking ${calc.parkingFee}`);
+  if (calc.fridgeFee)  parts.push(`Fridge ${calc.fridgeFee}`);
+  return parts.join('; ');
+}
