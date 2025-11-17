@@ -609,6 +609,11 @@ function doPost(e) {
     return _jsonResponse_({ ok: true, roomId: roomId || null });
   }
 
+  if (act === 'checkin_change_keyword') {
+    const ok = handleCheckinKeywordFromWorker_(body || {});
+    return _jsonResponse_({ ok });
+  }
+
   return _jsonResponse_({ ok: false, error: 'unknown_act' });
 }
 
@@ -940,6 +945,42 @@ function handleCheckinPickerTextCommand_(event) {
     type: 'text',
     text: `ส่งปุ่มเลือกวัน–เวลาเช็คอินของห้อง ${roomId} ให้แล้วค่ะ 🙏\nกดเลือกจากปุ่มล่าสุดได้เลย`
   }]);
+  sendCheckinPickerToUser(userId, roomId);
+  return true;
+}
+
+function handleCheckinKeywordFromWorker_(payload) {
+  if (!payload || typeof payload !== 'object') return false;
+  const userId = String(payload.lineUserId || payload.line_user_id || payload.userId || '').trim();
+  const chatId = String(payload.chatId || payload.targetId || '').trim();
+  const targetId = chatId || userId;
+  const textRaw = String(payload.message || '').trim();
+
+  if (!targetId) return false;
+
+  if (!userId) {
+    pushLineMessages_(targetId, [{
+      type: 'text',
+      text: 'ระบบต้องการข้อมูลบัญชี LINE เพื่อส่งปุ่มเลือกวันเช็คอิน กรุณาเริ่มแชตกับบอทในห้องส่วนตัวก่อนนะคะ 🙏'
+    }]);
+    return true;
+  }
+
+  const roomId = _findRoomByUserId_(userId);
+  if (!roomId) {
+    pushLineMessages_(targetId, [{
+      type: 'text',
+      text: 'ระบบไม่พบห้องที่เชื่อมกับบัญชี LINE นี้ กรุณาติดต่อแอดมินเพื่อให้ช่วยตรวจสอบนะคะ 🙏'
+    }]);
+    return true;
+  }
+
+  const notifyLines = [
+    textRaw ? `ข้อความ: ${textRaw}` : null,
+    `ส่งปุ่มเลือกวัน–เวลาเช็คอินของห้อง ${roomId} ให้แล้วค่ะ 🙏`,
+    'กดเลือกจากปุ่มล่าสุดได้เลย'
+  ].filter(Boolean);
+  pushLineMessages_(targetId, [{ type: 'text', text: notifyLines.join('\n') }]);
   sendCheckinPickerToUser(userId, roomId);
   return true;
 }
