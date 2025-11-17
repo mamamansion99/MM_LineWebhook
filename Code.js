@@ -968,10 +968,14 @@ function handleCheckinKeywordFromWorker_(payload) {
 
   const roomId = _findRoomByUserId_(userId);
   if (!roomId) {
-    pushLineMessages_(targetId, [{
-      type: 'text',
-      text: 'ระบบไม่พบห้องที่เชื่อมกับบัญชี LINE นี้ กรุณาติดต่อแอดมินเพื่อให้ช่วยตรวจสอบนะคะ 🙏'
-    }]);
+    const notFoundMsg = 'ระบบไม่พบห้องที่เชื่อมกับบัญชี LINE นี้ กรุณาติดต่อแอดมินเพื่อให้ช่วยตรวจสอบนะคะ 🙏';
+    pushLineMessages_(targetId, [{ type: 'text', text: notFoundMsg }]);
+    const adminLines = [
+      '⚠️ checkin_change_keyword: ไม่พบห้อง',
+      userId ? `• LINE UserID: ${userId}` : null,
+      textRaw ? `• ข้อความ: ${textRaw}` : null
+    ].filter(Boolean);
+    if (adminLines.length) sendLineMessage(adminLines.join('\n'));
     return true;
   }
 
