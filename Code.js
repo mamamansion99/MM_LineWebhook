@@ -1,10 +1,18 @@
 /**************** CONFIG ****************/
 const BOOKING_DOC_TEMPLATE_ID = '1RYY-YlVhET0YC_LwZgtAzkTOPvGUBESQyx2TpestHH4'; 
 const BOOKING_PDF_FOLDER_ID   = '1B8bPFAp0KYxQiO2DdUkF_Vy3ogf2EPyx';
-const SHEET_ID   = '1KsimOBXcP2PhZ3Y16DXo7KKcTO9sMNksKJbxc5VEHEQ';
-const SHEET_NAME = 'Sheet1'; // legacy sheet for booking data
-const ROOMS_SHEET_ID = SHEET_ID; // Rooms sheet lives in the same spreadsheet
-const ROOMS_SHEET_NAME = 'Rooms';
+var SHEET_ID =
+  (typeof SHEET_ID !== 'undefined' && SHEET_ID) ||
+  '1KsimOBXcP2PhZ3Y16DXo7KKcTO9sMNksKJbxc5VEHEQ';
+var SHEET_NAME =
+  (typeof SHEET_NAME !== 'undefined' && SHEET_NAME) ||
+  'Sheet1'; // legacy sheet for booking data
+var ROOMS_SHEET_ID =
+  (typeof ROOMS_SHEET_ID !== 'undefined' && ROOMS_SHEET_ID) ||
+  SHEET_ID;
+var ROOMS_SHEET_NAME =
+  (typeof ROOMS_SHEET_NAME !== 'undefined' && ROOMS_SHEET_NAME) ||
+  'Rooms';
 const LINE_TOKEN = PropertiesService.getScriptProperties().getProperty('LINE_TOKEN');
 const PAID_MENU_ID = 'richmenu-809f92d6bbba5cc330d0a89f92323a3a';
 const PREBOOK_SHEET_NAME   = 'PreBook';
