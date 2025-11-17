@@ -958,9 +958,18 @@ function handleCheckinKeywordFromWorker_(payload) {
   const targetId = chatId || userId;
   const textRaw = String(payload.message || '').trim();
 
-  if (!targetId) return false;
+  Logger.log('[checkin_keyword] payload=' + JSON.stringify({
+    lineUserId: userId || '(empty)',
+    chatId: chatId || '(empty)'
+  }));
+
+  if (!targetId) {
+    Logger.log('[checkin_keyword] abort: no targetId');
+    return false;
+  }
 
   if (!userId) {
+    Logger.log('[checkin_keyword] abort: missing userId');
     pushLineMessages_(targetId, [{
       type: 'text',
       text: 'ระบบต้องการข้อมูลบัญชี LINE เพื่อส่งปุ่มเลือกวันเช็คอิน กรุณาเริ่มแชตกับบอทในห้องส่วนตัวก่อนนะคะ 🙏'
@@ -970,6 +979,7 @@ function handleCheckinKeywordFromWorker_(payload) {
 
   const roomId = _findRoomByUserId_(userId);
   if (!roomId) {
+    Logger.log('[checkin_keyword] room not found for ' + userId);
     const notFoundMsg = 'ระบบไม่พบห้องที่เชื่อมกับบัญชี LINE นี้ กรุณาติดต่อแอดมินเพื่อให้ช่วยตรวจสอบนะคะ 🙏';
     pushLineMessages_(targetId, [{ type: 'text', text: notFoundMsg }]);
     const adminLines = [
@@ -981,6 +991,7 @@ function handleCheckinKeywordFromWorker_(payload) {
     return true;
   }
 
+  Logger.log('[checkin_keyword] send picker to room ' + roomId + ' for ' + userId);
   const notifyLines = [
     textRaw ? `ข้อความ: ${textRaw}` : null,
     `ส่งปุ่มเลือกวัน–เวลาเช็คอินของห้อง ${roomId} ให้แล้วค่ะ 🙏`,
