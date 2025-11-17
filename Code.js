@@ -56,6 +56,16 @@ const CHECKIN_PICKER_EARLIEST_MINUTES = 10 * 60;
 const CHECKIN_PICKER_EARLIEST_TIME_LABEL = '10:00';
 const CHECKIN_PICKER_LATEST_MINUTES = 18 * 60;
 const CHECKIN_PICKER_LATEST_TIME_LABEL = '18:00';
+const CHECKIN_PICKER_COMMAND_KEYWORDS = [
+  'เปลี่ยนวันเช็คอิน',
+  'เปลี่ยนวันที่เช็คอิน',
+  'เปลี่ยนวันทีเช็คอิน',
+  'เปลี่ยนวันเชคอิน',
+  'เปลี่ยนเวลาเช็คอิน',
+  'เปลี่ยนเวลาเชคอิน',
+  'changecheckindate',
+  'changecheckintime'
+];
 const OCCUPIED_STATUS_KEYWORDS = ['reserved','occupied','จอง','soon','checked in','check in'];
 
 
@@ -240,6 +250,8 @@ function handleText(event) {
   const userId     = event.source?.userId || '';
   const replyToken = event.replyToken;
   const userText   = (event.message?.text || '').trim();
+
+  if (handleCheckinPickerTextCommand_(event)) return;
 
   // Rent flow intercepts
   if (rentTextGate_(event)) return;
@@ -518,87 +530,10 @@ function handleIdImage_(event) {
 
 
 function handlePostback(event) {
+  if (handleCheckinPickerPostback_(event)) return;
+
   const userId = event.source?.userId || '';
   const data   = parseKv(event.postback?.data || '');
-
-    // === CHECK-IN (LINE datetime picker) ===
-  if (data.act === 'checkin_pick') {
-    if (!userId) return;
-    const p = event.postback && event.postback.params ? event.postback.params : {};
-    let date = "", time = "";
-
-    // LINE may send either `datetime: "YYYY-MM-DDTHH:MM"`, or separate `date` / `time`
-    if (p.datetime && p.datetime.indexOf("T") !== -1) {
-      const parts = p.datetime.split("T");
-      date = parts[0] || "";
-      time = parts[1] || "";
-    } else {
-      date = String(p.date || "");
-      time = String(p.time || "");
-    }
-
-    try {
-      const roomId = saveCheckinByUserId_(userId, date, time);  // writes to Rooms
-      send_(event, [{
-        type: "text",
-        text: `บันทึกวัน–เวลาเช็คอินเรียบร้อยค่ะ ✅\nห้อง: ${roomId || "-"}\nวันที่: ${date || "-"}\nเวลา: ${time || "-"}`
-      }], 0);
-    } catch (e) {
-      console.error("CHECKIN_ERROR " + e);
-      send_(event, [{ type: "text", text: "บันทึกไม่สำเร็จ กรุณาลองใหม่อีกครั้งค่ะ" }], 0);
-    }
-    return;
-  }
-
-/**
- * Find the tenant row in Rooms by Line ID and write date/time + confirm flags.
- * Returns the RoomId (if found) for a nicer confirmation message.
- */
-function saveCheckinByUserId_(userId, date, time) {
-  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName("Rooms");
-  if (!sh) throw new Error("Rooms sheet not found");
-
-  const H  = sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0]
-              .map(h => String(h || "").trim());
-  const Hl = H.map(h => h.toLowerCase());
-
-  // Required columns (case/alias tolerant)
-  const cRoom = Hl.findIndex(h => h.includes("room")) + 1;
-  const cUser = Hl.findIndex(h => h.includes("line id")) + 1;
-  const cDate = H.indexOf("CheckinDate") + 1;
-  const cTime = H.indexOf("CheckinTime") + 1;
-  const cConf = H.indexOf("CheckinConfirmed") + 1;
-  const cAt   = H.indexOf("ConfirmedAt") + 1;
-
-  if (!cUser || !cDate || !cTime || !cConf || !cAt) {
-    throw new Error("Missing columns in Rooms (need Line ID, CheckinDate, CheckinTime, CheckinConfirmed, ConfirmedAt)");
-  }
-
-  const last = sh.getLastRow();
-  if (last < 2) throw new Error("Rooms has no data");
-
-  const rows = sh.getRange(2,1, last-1, sh.getLastColumn()).getValues();
-  let rowIndex = -1, roomId = "";
-
-  for (let i = 0; i < rows.length; i++) {
-    const ln = String(rows[i][cUser-1] || "").trim();
-    if (ln === userId) {
-      rowIndex = i + 2;
-      roomId   = String(rows[i][cRoom-1] || "").trim();
-      break;
-    }
-  }
-  if (rowIndex === -1) throw new Error("User not found in Rooms");
-
-  // Write values
-  if (date) sh.getRange(rowIndex, cDate).setValue(date);
-  if (time) sh.getRange(rowIndex, cTime).setValue(time);
-  sh.getRange(rowIndex, cConf).setValue(true);
-  sh.getRange(rowIndex, cAt).setValue(new Date());
-
-  return roomId;
-}
-
 
   // === RENT CANCEL ===
   if (data.act === 'rent_cancel') {
@@ -805,6 +740,175 @@ function saveCheckinByUserId_(userId, date, time) {
       return send_(event, [{ type: 'text', text: 'มีข้อผิดพลาด โปรดลองใหม่อีกครั้งค่ะ' }], 0);
     }
   }
+}
+
+function handleCheckinPickerPostback_(event) {
+  if (!event || String(event.type || '').toLowerCase() !== 'postback') return false;
+  const payload = event.postback || {};
+  const data = _parsePostbackData_(payload.data || '');
+  if (String(data.act || '').trim().toLowerCase() !== 'checkin_pick') return false;
+
+  const params = payload.params || {};
+  const datetimeRaw = _lineDatetimeFromParams_(params);
+  const source = event.source || {};
+  const userId = String(source.userId || '').trim();
+  const roomId = String(data.room || '').trim() || (userId ? _findRoomByUserId_(userId) : '');
+  const pickerMax = CHECKIN_PICKER_MAX_DATETIME ? _parseLineDatetimeValue_(CHECKIN_PICKER_MAX_DATETIME) : null;
+  const maxThaiDate = pickerMax ? _thaiDate_(pickerMax) : '';
+
+  const pushUserText = (txt) => {
+    if (userId && txt) {
+      pushMessage(userId, [{ type: 'text', text: txt }]);
+    }
+  };
+
+  if (!datetimeRaw) {
+    pushUserText('ระบบไม่พบวัน–เวลาเช็คอินที่เลือก กรุณากดเลือกใหม่อีกครั้งค่ะ 🙏');
+    if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
+    return true;
+  }
+
+  const clockMinutes = _clockMinutesFromLineDatetime_(datetimeRaw);
+  const chosenTimeText = (datetimeRaw.split('T')[1] || '').slice(0, 5);
+  if (!Number.isFinite(clockMinutes)) {
+    pushUserText('รูปแบบเวลาไม่ถูกต้อง กรุณาเลือกใหม่อีกครั้งค่ะ 🙏');
+    if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
+    return true;
+  }
+
+  if (clockMinutes < CHECKIN_PICKER_EARLIEST_MINUTES) {
+    pushUserText(
+      `เวลาที่เลือก (${chosenTimeText || 'ไม่ระบุ'}) ก่อน ${CHECKIN_PICKER_EARLIEST_TIME_LABEL} น.\n` +
+      `กรุณาเลือกช่วง ${CHECKIN_PICKER_EARLIEST_TIME_LABEL}-${CHECKIN_PICKER_LATEST_TIME_LABEL} น. เท่านั้นค่ะ 🙏`
+    );
+    if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
+    return true;
+  }
+
+  if (clockMinutes > CHECKIN_PICKER_LATEST_MINUTES) {
+    pushUserText(
+      `เวลาที่เลือก (${chosenTimeText || 'ไม่ระบุ'}) หลัง ${CHECKIN_PICKER_LATEST_TIME_LABEL} น.\n` +
+      `กรุณาเลือกช่วง ${CHECKIN_PICKER_EARLIEST_TIME_LABEL}-${CHECKIN_PICKER_LATEST_TIME_LABEL} น. เท่านั้นค่ะ 🙏`
+    );
+    if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
+    return true;
+  }
+
+  const selected = _parseLineDatetimeValue_(datetimeRaw);
+  if (!selected) {
+    pushUserText('ไม่สามารถอ่านค่าวันที่/เวลาได้ กรุณาเลือกใหม่ค่ะ 🙏');
+    if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
+    return true;
+  }
+
+  if (pickerMax && selected.getTime() > pickerMax.getTime()) {
+    pushUserText(
+      `วันเช็คอินที่เลือกเกินช่วงที่กำหนดไว้ กรุณาเลือกวันก่อน ${maxThaiDate || '15 ม.ค. 2026'} ค่ะ 🙏`
+    );
+    if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
+    return true;
+  }
+
+  if (!roomId) {
+    pushUserText('ระบบไม่พบห้องที่เชื่อมกับบัญชี LINE นี้ กรุณาติดต่อแอดมินเพื่อให้ช่วยบันทึกวันเช็คอินค่ะ 🙏');
+    return true;
+  }
+
+  const dateOnly = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate());
+  const timeText = Utilities.formatDate(selected, CHECKIN_PICKER_TIMEZONE, 'HH:mm');
+  const saved = _updateRoomCheckinSelection_(roomId, { dateOnly, timeText });
+
+  if (!saved) {
+    pushUserText('ระบบบันทึกวันเช็คอินไม่สำเร็จ กรุณาติดต่อแอดมินเพื่อให้ช่วยตรวจสอบค่ะ 🙏');
+    console.log('Check-in picker: failed to write to sheet for room ' + roomId);
+    return true;
+  }
+
+  const thaiDate = _thaiDate_(dateOnly);
+  const ackLines = [
+    `บันทึกวันเช็คอินของห้อง ${roomId} แล้วค่ะ 🙏`,
+    `🗓️ ${thaiDate} เวลา ${timeText} น.`,
+    'หากต้องการปรับเปลี่ยน สามารถกดเลือกใหม่จากปุ่มเดิมได้เลยค่ะ'
+  ];
+  pushUserText(ackLines.join('\n'));
+  console.log(`Check-in picker saved for ${roomId}: ${thaiDate} ${timeText}`);
+  return true;
+}
+
+function _updateRoomCheckinSelection_(roomId, selection) {
+  if (!roomId || !selection) return false;
+  const { sh, H, Hl } = _roomsHeaders_();
+  const cRoom = Hl.findIndex(h => h.includes('room')) + 1;
+  if (!cRoom) return false;
+  const cDate = H.indexOf('CheckinDate') + 1;
+  const cTime = H.indexOf('CheckinTime') + 1;
+  const cConf = H.indexOf('CheckinConfirmed') + 1;
+  const cAt   = H.indexOf('ConfirmedAt') + 1;
+  if (!cDate && !cTime && !cConf && !cAt) return false;
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return false;
+
+  const rooms = sh.getRange(2, cRoom, lastRow - 1, 1).getValues();
+  const target = String(roomId).trim().toUpperCase();
+  for (let i = 0; i < rooms.length; i++) {
+    const id = String(rooms[i][0] || '').trim().toUpperCase();
+    if (!id || id !== target) continue;
+    const row = i + 2;
+    if (cDate) sh.getRange(row, cDate).setValue(selection.dateOnly);
+    if (cTime) sh.getRange(row, cTime).setValue(selection.timeText);
+    if (cConf) sh.getRange(row, cConf).setValue(true);
+    if (cAt) sh.getRange(row, cAt).setValue(new Date());
+    return true;
+  }
+  return false;
+}
+
+function _thaiDate_(date) {
+  if (!(date instanceof Date)) return '';
+  return Utilities.formatDate(date, CHECKIN_PICKER_TIMEZONE, 'dd MMM yyyy');
+}
+
+function handleCheckinPickerTextCommand_(event) {
+  if (!event || String(event.type || '').toLowerCase() !== 'message') return false;
+  const message = event.message || {};
+  if (String(message.type || '').toLowerCase() !== 'text') return false;
+
+  const rawText = String(message.text || '').trim();
+  if (!rawText) return false;
+
+  const collapsed = rawText.toLowerCase().replace(/\s+/g, '');
+  const matched = CHECKIN_PICKER_COMMAND_KEYWORDS.some(keyword => collapsed.includes(keyword));
+  if (!matched) return false;
+
+  const source = event.source || {};
+  const userId = String(source.userId || '').trim();
+  const replyTargetId = String(source.userId || source.groupId || source.roomId || '').trim();
+  if (!replyTargetId) return false;
+
+  if (!userId) {
+    pushMessage(replyTargetId, [{
+      type: 'text',
+      text: 'ระบบต้องการข้อมูลบัญชี LINE เพื่อส่งปุ่มเลือกวันเช็คอิน กรุณาเริ่มแชตกับบอทในห้องส่วนตัวก่อนนะคะ 🙏'
+    }]);
+    return true;
+  }
+
+  const roomId = _findRoomByUserId_(userId);
+  if (!roomId) {
+    pushMessage(replyTargetId, [{
+      type: 'text',
+      text: 'ระบบไม่พบห้องที่เชื่อมกับบัญชี LINE นี้ กรุณาติดต่อแอดมินเพื่อให้ช่วยตรวจสอบนะคะ 🙏'
+    }]);
+    return true;
+  }
+
+  pushMessage(replyTargetId, [{
+    type: 'text',
+    text: `ส่งปุ่มเลือกวัน–เวลาเช็คอินของห้อง ${roomId} ให้แล้วค่ะ 🙏\nกดเลือกจากปุ่มล่าสุดได้เลย`
+  }]);
+  sendCheckinPickerToUser(userId, roomId);
+  return true;
 }
 
 
@@ -1106,6 +1210,38 @@ function parseKv(q) {
   return out;
 }
 
+function _parsePostbackData_(raw) {
+  const input = String(raw || '').trim();
+  if (!input) return {};
+
+  if (input.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(input);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed;
+      }
+    } catch (err) {
+      Logger.log('parsePostbackData json error: ' + err);
+    }
+  }
+
+  const out = {};
+  input.split('&').forEach(fragment => {
+    if (!fragment) return;
+    const [keyRaw, valRaw = ''] = fragment.split('=');
+    const key = decodeURIComponent(String(keyRaw || '')).trim();
+    const val = decodeURIComponent(String(valRaw || '')).trim();
+    if (!key) return;
+    if (Object.prototype.hasOwnProperty.call(out, key)) {
+      const prev = out[key];
+      out[key] = Array.isArray(prev) ? prev.concat(val) : [prev, val];
+    } else {
+      out[key] = val;
+    }
+  });
+  return out;
+}
+
 function _buildPostbackData_(data) {
   if (!data || typeof data !== 'object') return '';
   return Object.keys(data)
@@ -1117,6 +1253,37 @@ function _buildPostbackData_(data) {
     })
     .filter(Boolean)
     .join('&');
+}
+
+function _lineDatetimeFromParams_(params) {
+  if (!params || typeof params !== 'object') return '';
+  if (params.datetime) return String(params.datetime);
+  if (params.date && params.time) return `${params.date}T${params.time}`;
+  return '';
+}
+
+function _clockMinutesFromLineDatetime_(raw) {
+  const str = String(raw || '').trim();
+  if (!str) return NaN;
+  const timePart = str.split('T')[1] || str;
+  const match = timePart.match(/^(\d{2}):(\d{2})/);
+  if (!match) return NaN;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return NaN;
+  return hours * 60 + minutes;
+}
+
+function _parseLineDatetimeValue_(raw) {
+  const str = String(raw || '').trim();
+  if (!str) return null;
+  const hasSeconds = /:\d{2}(?:[+-]|Z)/.test(str);
+  const hasOffset = /[+-]\d{2}:?\d{2}$|Z$/i.test(str);
+  let iso = str;
+  if (!hasSeconds) iso += ':00';
+  if (!hasOffset) iso += CHECKIN_PICKER_TZ_OFFSET;
+  const parsed = new Date(iso);
+  return isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function _tokensSheet_() {
@@ -1167,6 +1334,12 @@ function _findRoomByUserId_(userId) {
     }
   }
   return '';
+}
+
+function _roomsHeaders_() {
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Rooms');
+  const H  = sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(h => String(h || '').trim());
+  return { sh, H, Hl: H.map(h => h.toLowerCase()) };
 }
 
 
@@ -2075,6 +2248,8 @@ function handleTextPush_(event) {
   const userId   = event.source?.userId || '';
   const userText = (event.message?.text || '').trim();
   if (!userId || !userText) return;
+
+  if (handleCheckinPickerTextCommand_(event)) return;
 
   // (0) Move-out magic link (with loading + button)
   if (/^\s*แจ้งออก\s*$/i.test(userText)) {
