@@ -1888,6 +1888,13 @@ function testGroupApproveCard() {
   });
 }
 
+/** === TEST: push to *your* LINE ID once === */
+function testSendCheckinPickerToMe() {
+  const MY_LINE_USER_ID = 'Ue90558b73d62863e2287ac32e69541a3'; // <- yours
+  const roomId = _findRoomByUserId_(MY_LINE_USER_ID);          // optional, just for nicer text
+  sendCheckinPickerToUser(MY_LINE_USER_ID, roomId);
+}
+
 function handleMoveoutFromWorker_(data) {
   try {
     const roomId  = String(data.roomId || '').toUpperCase().trim();
