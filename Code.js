@@ -48,6 +48,16 @@ const TH_MONTHS = {
 const ADMIN_GROUP_ID = PropertiesService.getScriptProperties().getProperty('ADMIN_GROUP_ID');
 const FRONTEND_BASE = PROPS.getProperty('FRONTEND_BASE') || 'https://mama-moveout.pages.dev/';
 
+// Check-in picker configuration
+const CHECKIN_PICKER_MAX_DATETIME = '2026-01-14T18:00';
+const CHECKIN_PICKER_TIMEZONE = 'Asia/Bangkok';
+const CHECKIN_PICKER_TZ_OFFSET = '+07:00';
+const CHECKIN_PICKER_EARLIEST_MINUTES = 10 * 60;
+const CHECKIN_PICKER_EARLIEST_TIME_LABEL = '10:00';
+const CHECKIN_PICKER_LATEST_MINUTES = 18 * 60;
+const CHECKIN_PICKER_LATEST_TIME_LABEL = '18:00';
+const OCCUPIED_STATUS_KEYWORDS = ['reserved','occupied','จอง','soon','checked in','check in'];
+
 
 
 function doGet(e) {
@@ -1096,6 +1106,19 @@ function parseKv(q) {
   return out;
 }
 
+function _buildPostbackData_(data) {
+  if (!data || typeof data !== 'object') return '';
+  return Object.keys(data)
+    .filter(key => Object.prototype.hasOwnProperty.call(data, key))
+    .map(key => {
+      const val = data[key];
+      if (val === undefined || val === null || val === '') return null;
+      return encodeURIComponent(key) + '=' + encodeURIComponent(String(val));
+    })
+    .filter(Boolean)
+    .join('&');
+}
+
 function _tokensSheet_() {
   return SpreadsheetApp.openById(SHEET_ID).getSheetByName('Tokens');
 }
@@ -1119,6 +1142,30 @@ function findRoomByLineId_(lineId) {
   const cUser = head.findIndex(h=>h.includes('line') && h.includes('id'));
   if (cRoom<0 || cUser<0) return '';
   for (const r of vals) if (String(r[cUser]||'').trim() === lineId) return String(r[cRoom]||'').trim().toUpperCase();
+  return '';
+}
+
+function _findRoomByUserId_(userId) {
+  const sh = SpreadsheetApp.openById(SHEET_ID).getSheetByName('Rooms');
+  if (!sh) return '';
+  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0]
+    .map(h => String(h || '').trim());
+  const lower = headers.map(h => h.toLowerCase());
+  const cRoom = lower.findIndex(h => h.includes('room')) + 1;
+  const cUser = lower.findIndex(h => h.includes('line id')) + 1;
+  if (!cRoom || !cUser) return '';
+
+  const rows = sh.getLastRow() - 1;
+  if (rows < 1) return '';
+
+  const values = sh.getRange(2, 1, rows, sh.getLastColumn()).getValues();
+  const target = String(userId || '').trim().toLowerCase();
+  for (let i = 0; i < values.length; i++) {
+    const id = String(values[i][cUser - 1] || '').trim().toLowerCase();
+    if (id && id === target) {
+      return String(values[i][cRoom - 1] || '').trim();
+    }
+  }
   return '';
 }
 
@@ -1888,6 +1935,43 @@ function testGroupApproveCard() {
   });
 }
 
+function sendCheckinPickerToUser(userId, roomId) {
+  if (!userId) throw new Error('sendCheckinPickerToUser: missing userId');
+  const pickerData = _buildPostbackData_({ act: 'checkin_pick', room: roomId || '' }) || 'act=checkin_pick';
+  const payload = {
+    to: userId,
+    messages: [{
+      type: 'template',
+      altText: 'เลือกวัน–เวลาเช็คอิน',
+      template: {
+        type: 'confirm',
+        text: `ห้อง ${roomId || '-'}\nโปรดเลือกวัน–เวลาเช็คอิน (${CHECKIN_PICKER_EARLIEST_TIME_LABEL}-${CHECKIN_PICKER_LATEST_TIME_LABEL} น. เท่านั้น)`,
+        actions: [
+          {
+            type: 'datetimepicker',
+            label: 'เลือกวัน–เวลา',
+            data: pickerData,
+            mode: 'datetime',
+            max: CHECKIN_PICKER_MAX_DATETIME
+          },
+          { type: 'postback', label: 'ยกเลิก', data: 'act=rent_cancel' }
+        ]
+      }
+    }]
+  };
+
+  const res = UrlFetchApp.fetch('https://api.line.me/v2/bot/message/push', {
+    method: 'post',
+    headers: {
+      'Content-Type': 'application/json; charset=UTF-8',
+      'Authorization': 'Bearer ' + CHANNEL_ACCESS_TOKEN
+    },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+  Logger.log('CHECKIN_PICKER_PUSH code=%s body=%s', res.getResponseCode(), res.getContentText());
+}
+
 /** === TEST: push to *your* LINE ID once === */
 function testSendCheckinPickerToMe() {
   const MY_LINE_USER_ID = 'Ue90558b73d62863e2287ac32e69541a3'; // <- yours
@@ -2090,4 +2174,3 @@ function send_(event, messages, withLoadingSecs) {
   // Fallback PUSH (works for Worker-forwarded events)
   if (userId) return pushWithLoading(userId, messages, secs);
 }
-
