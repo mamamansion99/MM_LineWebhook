@@ -1882,12 +1882,23 @@ function findInboxRowBySlipId_(slipId) {
   return null;
 }
 
-function deriveBankMatchStatus_(billAccountCode, ocrAccountCode){
-  const bill = String(billAccountCode || '').trim().toUpperCase();
-  const ocr  = String(ocrAccountCode || '').trim().toUpperCase();
-  if (!bill) return '';
-  if (!ocr || ocr === 'NON_MATCH') return 'receiver_non_match';
-  if (bill === ocr) return 'receiver_matched';
+function normalizeBankFromCodeOrBank_(val){
+  const v = String(val || '').trim().toUpperCase();
+  if (!v) return '';
+  if (v.indexOf('GSB') !== -1) return 'GSB';
+  if (v.indexOf('KKK') !== -1 || v.indexOf('KKB') !== -1) return 'KBANK';
+  if (v.indexOf('TMK') !== -1 || v.indexOf('MAK') !== -1) return 'KBANK';
+  if (v.indexOf('BAY') !== -1 || v.indexOf('KGSI') !== -1) return 'BAY';
+  if (v.indexOf('KBIZ') !== -1) return 'KBIZ';
+  return v;
+}
+
+function deriveBankMatchStatus_(billAccountCode, ocrAccountCode, ocrBank){
+  const billBank = normalizeBankFromCodeOrBank_(billAccountCode);
+  const ocrNorm  = normalizeBankFromCodeOrBank_(ocrAccountCode || ocrBank);
+  if (!billBank) return '';
+  if (!ocrNorm || ocrNorm === 'NON_MATCH') return 'receiver_non_match';
+  if (billBank === ocrNorm) return 'receiver_matched';
   return 'receiver_mismatch';
 }
 
@@ -1980,8 +1991,10 @@ function onReviewQueueEdit_(e) {
         const shIn = openRevenueSheetByName_('Payments_Inbox');
         const hIn  = inbox.headers;
         const cAcc = idxOf_(hIn, 'ocr_accountcode');
+        const cBk  = idxOf_(hIn, 'ocr_bank');
         const ocrAccCode = cAcc > -1 ? String(shIn.getRange(inbox.rowIndex, cAcc+1).getValue() || '').trim().toUpperCase() : '';
-        bankMatchStatus = deriveBankMatchStatus_(billMeta.account, ocrAccCode);
+        const ocrBank     = cBk  > -1 ? String(shIn.getRange(inbox.rowIndex, cBk+1).getValue()  || '').trim().toUpperCase() : '';
+        bankMatchStatus = deriveBankMatchStatus_(billMeta.account, ocrAccCode, ocrBank);
 
         const cSt  = idxOf_(hIn, 'matchstatus');
         const cId  = idxOf_(hIn, 'matchedbillid');
