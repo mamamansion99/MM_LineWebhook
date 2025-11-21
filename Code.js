@@ -1882,14 +1882,40 @@ function findInboxRowBySlipId_(slipId) {
   return null;
 }
 
+function deriveBankMatchStatus_(billAccountCode, ocrAccountCode){
+  const bill = String(billAccountCode || '').trim().toUpperCase();
+  const ocr  = String(ocrAccountCode || '').trim().toUpperCase();
+  if (!bill) return '';
+  if (!ocr || ocr === 'NON_MATCH') return 'receiver_non_match';
+  if (bill === ocr) return 'receiver_matched';
+  return 'receiver_mismatch';
+}
+
+function getBillAccountById_(billId){
+  const sh  = openRevenueSheetByName_('Horga_Bills');
+  const hdr = getHeaders_(sh);
+  const cBill   = idxOf_(hdr, 'billid');
+  const cAcc    = idxOf_(hdr, 'account');
+  if (cBill < 0) throw new Error('Horga_Bills missing BillID col');
+  const vals = sh.getRange(2,1,Math.max(0,sh.getLastRow()-1), sh.getLastColumn()).getValues();
+  for (let i=0;i<vals.length;i++) {
+    if (String(vals[i][cBill]).trim() === String(billId).trim()) {
+      const account = cAcc > -1 ? String(vals[i][cAcc]||'').trim().toUpperCase() : '';
+      return { account, rowIndex: i+2 };
+    }
+  }
+  throw new Error('Bill not found: ' + billId);
+}
+
 /** Update a bill row to mark slip received (idempotent). */
-function setBillSlipReceived_(billId, slipId, statusText) {
+function setBillSlipReceived_(billId, slipId, statusText, bankMatchStatus) {
   const sh  = openRevenueSheetByName_('Horga_Bills');
   const hdr = getHeaders_(sh);
   const cBill   = idxOf_(hdr, 'billid');
   const cStatus = idxOf_(hdr, 'status');
   const cPaidAt = idxOf_(hdr, 'paidat');
   const cSlipID = idxOf_(hdr, 'slipid');
+  const cBank   = idxOf_(hdr, 'bankmatchstatus');
   if (cBill < 0) throw new Error('Horga_Bills missing BillID col');
   const vals = sh.getRange(2,1,Math.max(0,sh.getLastRow()-1), sh.getLastColumn()).getValues();
   for (let i=0;i<vals.length;i++) {
@@ -1897,6 +1923,7 @@ function setBillSlipReceived_(billId, slipId, statusText) {
       if (cSlipID > -1) sh.getRange(i+2, cSlipID+1).setValue(slipId || '');
       if (cPaidAt > -1) sh.getRange(i+2, cPaidAt+1).setValue(new Date());
       if (cStatus > -1) sh.getRange(i+2, cStatus+1).setValue(statusText || 'Slip Received');
+      if (cBank > -1 && bankMatchStatus) sh.getRange(i+2, cBank+1).setValue(bankMatchStatus);
       return i+2;
     }
   }
@@ -1946,14 +1973,16 @@ function onReviewQueueEdit_(e) {
     const userId     = String(get('LineUserID') || '').trim();
 
     if (decision === 'APPROVE') {
-      // 1) Mark bill as Slip Received
-      setBillSlipReceived_(billId, slipId, 'Slip Received (Manual)');
-
-      // 2) Update Payments_Inbox row
+      let bankMatchStatus = '';
       const inbox = findInboxRowBySlipId_(slipId);
+      const billMeta = getBillAccountById_(billId);
       if (inbox) {
         const shIn = openRevenueSheetByName_('Payments_Inbox');
         const hIn  = inbox.headers;
+        const cAcc = idxOf_(hIn, 'ocr_accountcode');
+        const ocrAccCode = cAcc > -1 ? String(shIn.getRange(inbox.rowIndex, cAcc+1).getValue() || '').trim().toUpperCase() : '';
+        bankMatchStatus = deriveBankMatchStatus_(billMeta.account, ocrAccCode);
+
         const cSt  = idxOf_(hIn, 'matchstatus');
         const cId  = idxOf_(hIn, 'matchedbillid');
         const cCf  = idxOf_(hIn, 'confidence');
@@ -1965,6 +1994,9 @@ function onReviewQueueEdit_(e) {
           `approved by admin${adjAmt ? '; adjAmt=' + Number(adjAmt) : ''}`
         );
       }
+
+      // 1) Mark bill as Slip Received
+      setBillSlipReceived_(billId, slipId, 'Slip Received (Manual)', bankMatchStatus);
 
       // 3) Close the review row
       set('ResolvedAt', new Date());
