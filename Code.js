@@ -1982,6 +1982,7 @@ function onReviewQueueEdit_(e) {
     const billId     = String(get('ApplyBillID') || get('BillID') || '').trim();
     const adjAmt     = get('AdjustedAmount'); // optional
     const userId     = String(get('LineUserID') || '').trim();
+    let roomLabel    = '';
 
     if (decision === 'APPROVE') {
       let bankMatchStatus = '';
@@ -1992,8 +1993,10 @@ function onReviewQueueEdit_(e) {
         const hIn  = inbox.headers;
         const cAcc = idxOf_(hIn, 'ocr_accountcode');
         const cBk  = idxOf_(hIn, 'ocr_bank');
+        const cRoom= idxOf_(hIn, 'room');
         const ocrAccCode = cAcc > -1 ? String(shIn.getRange(inbox.rowIndex, cAcc+1).getValue() || '').trim().toUpperCase() : '';
         const ocrBank     = cBk  > -1 ? String(shIn.getRange(inbox.rowIndex, cBk+1).getValue()  || '').trim().toUpperCase() : '';
+        roomLabel = cRoom > -1 ? String(shIn.getRange(inbox.rowIndex, cRoom+1).getValue() || '').trim().toUpperCase() : '';
         bankMatchStatus = deriveBankMatchStatus_(billMeta.account, ocrAccCode, ocrBank);
 
         const cSt  = idxOf_(hIn, 'matchstatus');
@@ -2014,7 +2017,14 @@ function onReviewQueueEdit_(e) {
       // 3) Close the review row
       set('ResolvedAt', new Date());
       set('Reason', 'approved_manual');
-      adminNotify_(`MM: Approved mismatch\nBill: ${billId}\nSlip: ${slipId}${adjAmt?`\nAdjAmt: ${adjAmt}`:''}`);
+      adminNotify_([
+        '✅ ยืนยันสลิป (manual)',
+        roomLabel ? `ห้อง: ${roomLabel}` : '',
+        billId ? `บิล: ${billId}` : '',
+        slipId ? `SlipID: ${slipId}` : '',
+        bankMatchStatus ? `สถานะบัญชี: ${bankMatchStatus}` : '',
+        adjAmt ? `ยอดปรับ: ${adjAmt}` : ''
+      ].filter(Boolean).join('\n'));
       if (userId) pushMessage(userId, [{ type:'text', text:'✅ ยืนยันยอดเรียบร้อย ขอบคุณค่ะ' }]);
     }
 
@@ -2024,6 +2034,8 @@ function onReviewQueueEdit_(e) {
       if (inbox) {
         const shIn = openRevenueSheetByName_('Payments_Inbox');
         const hIn  = inbox.headers;
+        const cRoom= idxOf_(hIn, 'room');
+        roomLabel = cRoom > -1 ? String(shIn.getRange(inbox.rowIndex, cRoom+1).getValue() || '').trim().toUpperCase() : roomLabel;
         const cSt  = idxOf_(hIn, 'matchstatus');
         const cCf  = idxOf_(hIn, 'confidence');
         const cNt  = idxOf_(hIn, 'notes');
@@ -2034,7 +2046,12 @@ function onReviewQueueEdit_(e) {
       // 2) Keep bill unpaid, close review
       set('ResolvedAt', new Date());
       set('Reason', 'rejected');
-      adminNotify_(`MM: Rejected mismatch\nBill: ${billId}\nSlip: ${slipId}`);
+      adminNotify_([
+        '❌ ปฏิเสธสลิป (manual)',
+        roomLabel ? `ห้อง: ${roomLabel}` : '',
+        billId ? `บิล: ${billId}` : '',
+        slipId ? `SlipID: ${slipId}` : ''
+      ].filter(Boolean).join('\n'));
       if (userId) pushMessage(userId, [{ type:'text', text:'❌ สลิปไม่ถูกต้อง กรุณาส่งสลิปใหม่ค่ะ' }]);
     }
   } catch (err) {
