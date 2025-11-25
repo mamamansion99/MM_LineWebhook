@@ -2014,7 +2014,7 @@ function onReviewQueueEdit_(e) {
       // 3) Close the review row
       set('ResolvedAt', new Date());
       set('Reason', 'approved_manual');
-      sendLineNotify_(`MM: Approved mismatch\nBill: ${billId}\nSlip: ${slipId}${adjAmt?`\nAdjAmt: ${adjAmt}`:''}`);
+      adminNotify_(`MM: Approved mismatch\nBill: ${billId}\nSlip: ${slipId}${adjAmt?`\nAdjAmt: ${adjAmt}`:''}`);
       if (userId) pushMessage(userId, [{ type:'text', text:'✅ ยืนยันยอดเรียบร้อย ขอบคุณค่ะ' }]);
     }
 
@@ -2034,7 +2034,7 @@ function onReviewQueueEdit_(e) {
       // 2) Keep bill unpaid, close review
       set('ResolvedAt', new Date());
       set('Reason', 'rejected');
-      sendLineNotify_(`MM: Rejected mismatch\nBill: ${billId}\nSlip: ${slipId}`);
+      adminNotify_(`MM: Rejected mismatch\nBill: ${billId}\nSlip: ${slipId}`);
       if (userId) pushMessage(userId, [{ type:'text', text:'❌ สลิปไม่ถูกต้อง กรุณาส่งสลิปใหม่ค่ะ' }]);
     }
   } catch (err) {
