@@ -428,15 +428,6 @@ function handleSlipImage_(event) {
     const tempFileId  = saveSlipToSpecificFolder_(codeDisplay, blob, TEMP_SLIP_FOLDER_ID);
     const publicUrl   = `https://drive.google.com/uc?export=view&id=${tempFileId}`;
 
-    // write to Payments_Inbox immediately
-    recordSlipToInbox_({
-      lineUserId: userId,
-      room: found.roomId || '',
-      slipUrl: publicUrl,
-      declaredAmount: null,
-      note: 'from booking flow (awaiting user confirm)'
-    });
-
     // keep state for confirm step
     const cache = CacheService.getUserCache();
     cache.put(
