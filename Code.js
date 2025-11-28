@@ -417,11 +417,12 @@ function handleSlipImage_(event) {
       return send_(event, [{ type:'text', text:'ไฟล์ใหญ่เกิน 10MB ค่ะ' }], 0);
     }
 
-    // find the booking row awaiting payment from this user
-    const found = findAwaitingRowByUser_(userId);
-    if (!found) {
-      return send_(event, [{ type:'text', text:'ยังไม่พบรายการ กรุณาพิมพ์รหัส #MM### ก่อนส่งสลิปค่ะ' }], 0);
-    }
+  // find the booking row awaiting payment from this user
+  const found = findAwaitingRowByUser_(userId);
+  if (!found) {
+    // Not in reservation flow; respond with a generic helper message
+    return send_(event, [{ type:'text', text:'รับภาพแล้วค่ะ มีอะไรให้ช่วยแจ้งได้เลยนะคะ' }], 0);
+  }
 
     // save slip image into temp folder
     const codeDisplay = '#' + found.code;
