@@ -811,9 +811,9 @@ function handleCheckinPickerPostback_(event) {
 
   const dateOnly = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate());
   const timeText = Utilities.formatDate(selected, CHECKIN_PICKER_TIMEZONE, 'HH:mm');
-  const saved = _updateRoomCheckinSelection_(roomId, { dateOnly, timeText });
+  const updateResult = _updateRoomCheckinSelection_(roomId, { dateOnly, timeText });
 
-  if (!saved) {
+  if (!updateResult.ok) {
     pushUserText('ระบบบันทึกวันเช็คอินไม่สำเร็จ กรุณาติดต่อแอดมินเพื่อให้ช่วยตรวจสอบค่ะ 🙏');
     console.log('Check-in picker: failed to write to sheet for room ' + roomId);
     return true;
@@ -829,28 +829,31 @@ function handleCheckinPickerPostback_(event) {
   console.log(`Check-in picker saved for ${roomId}: ${thaiDate} ${timeText}`);
 
   // 🔸 NEW: Create Google Calendar event for this check-in
-  const calendarCreated = _createCheckinCalendarEvent_(roomId, dateOnly, timeText);
-  if (!calendarCreated) {
+  const calendarCreated = _createCheckinCalendarEvent_(roomId, dateOnly, timeText, updateResult.prevEventId);
+  if (!calendarCreated.ok) {
     console.warn(`Check-in calendar event creation failed for room ${roomId}`);
     pushUserText('⚠️ หมายเหตุ: บันทึกปฏิทินไม่สำเร็จ แต่ได้บันทึกวันเช็คอินแล้ว');
+  } else if (calendarCreated.eventId) {
+    _saveRoomCheckinEventId_(updateResult.row, calendarCreated.eventId);
   }
 
   return true;
 }
 
 function _updateRoomCheckinSelection_(roomId, selection) {
-  if (!roomId || !selection) return false;
+  if (!roomId || !selection) return { ok: false };
   const { sh, H, Hl } = _roomsHeaders_();
   const cRoom = Hl.findIndex(h => h.includes('room')) + 1;
-  if (!cRoom) return false;
+  if (!cRoom) return { ok: false };
   const cDate = H.indexOf('CheckinDate') + 1;
   const cTime = H.indexOf('CheckinTime') + 1;
   const cConf = H.indexOf('CheckinConfirmed') + 1;
   const cAt   = H.indexOf('ConfirmedAt') + 1;
-  if (!cDate && !cTime && !cConf && !cAt) return false;
+  const cEvent = H.indexOf('CheckinEventId') + 1;
+  if (!cDate && !cTime && !cConf && !cAt && !cEvent) return { ok: false };
 
   const lastRow = sh.getLastRow();
-  if (lastRow < 2) return false;
+  if (lastRow < 2) return { ok: false };
 
   const rooms = sh.getRange(2, cRoom, lastRow - 1, 1).getValues();
   const target = String(roomId).trim().toUpperCase();
@@ -858,13 +861,26 @@ function _updateRoomCheckinSelection_(roomId, selection) {
     const id = String(rooms[i][0] || '').trim().toUpperCase();
     if (!id || id !== target) continue;
     const row = i + 2;
+    const prevEventId = cEvent ? String(sh.getRange(row, cEvent).getValue() || '').trim() : '';
     if (cDate) sh.getRange(row, cDate).setValue(selection.dateOnly);
     if (cTime) sh.getRange(row, cTime).setValue(selection.timeText);
     if (cConf) sh.getRange(row, cConf).setValue(true);
     if (cAt) sh.getRange(row, cAt).setValue(new Date());
-    return true;
+    if (cEvent && selection.hasOwnProperty('eventId')) {
+      sh.getRange(row, cEvent).setValue(selection.eventId || '');
+    }
+    return { ok: true, row, prevEventId };
   }
-  return false;
+  return { ok: false };
+}
+
+function _saveRoomCheckinEventId_(row, eventId) {
+  if (!row) return false;
+  const { sh, H } = _roomsHeaders_();
+  const cEvent = H.indexOf('CheckinEventId') + 1;
+  if (!cEvent) return false;
+  sh.getRange(row, cEvent).setValue(eventId || '');
+  return true;
 }
 
 function _thaiDate_(date) {
@@ -919,9 +935,10 @@ function handleCheckinPickerTextCommand_(event) {
  * @param {string} roomId - Room identifier
  * @param {Date} dateOnly - Check-in date
  * @param {string} timeText - Check-in time (HH:mm format)
- * @returns {boolean} - Success status
+ * @param {string=} oldEventId - Previous event ID to delete
+ * @returns {{ok:boolean, eventId?:string}} - Success status and eventId
  */
-function _createCheckinCalendarEvent_(roomId, dateOnly, timeText) {
+function _createCheckinCalendarEvent_(roomId, dateOnly, timeText, oldEventId) {
   try {
     if (!CHECKIN_CALENDAR_ID || !roomId || !dateOnly || !timeText) {
       console.warn('_createCheckinCalendarEvent_: missing required params', { 
@@ -952,15 +969,14 @@ function _createCheckinCalendarEvent_(roomId, dateOnly, timeText) {
       description: `Tenant check-in for room ${roomId}\nCheck-in time: ${timeText} น.`,
       location: `Room ${roomId}`,
       start: { dateTime: startDateTime.toISOString(), timeZone: CHECKIN_PICKER_TIMEZONE },
-      end: { dateTime: endDateTime.toISOString(), timeZone: CHECKIN_PICKER_TIMEZONE },
-      color: { background: '#51B749' } // Green color for check-in
+      end: { dateTime: endDateTime.toISOString(), timeZone: CHECKIN_PICKER_TIMEZONE }
     };
 
     // Create event in calendar
     const calendar = CalendarApp.getCalendarById(CHECKIN_CALENDAR_ID);
     if (!calendar) {
       console.error('_createCheckinCalendarEvent_: Calendar not found with ID ' + CHECKIN_CALENDAR_ID);
-      return false;
+      return { ok: false };
     }
 
     const createdEvent = calendar.createEvent(
@@ -970,18 +986,51 @@ function _createCheckinCalendarEvent_(roomId, dateOnly, timeText) {
       { description: event.description, location: event.location }
     );
 
+    try {
+      if (createdEvent.setColor) createdEvent.setColor(CalendarApp.EventColor.GREEN);
+    } catch (colorErr) {
+      console.warn('Could not set event color', String(colorErr));
+    }
+
+    const eventId = createdEvent.getId();
+    if (oldEventId) {
+      try {
+        const oldEvent = calendar.getEventById(oldEventId);
+        if (oldEvent) {
+          oldEvent.deleteEvent();
+          console.log('Deleted previous check-in calendar event', { roomId, oldEventId });
+        }
+      } catch (delErr) {
+        console.warn('Could not delete previous check-in event', { roomId, oldEventId, err: String(delErr) });
+      }
+    }
     console.log('Check-in calendar event created:', {
-      eventId: createdEvent.getId(),
+      eventId,
       roomId,
       date: dateOnly.toISOString().split('T')[0],
       time: timeText
     });
 
-    return true;
+    return { ok: true, eventId };
   } catch (err) {
     console.error('_createCheckinCalendarEvent_ error:', String(err));
-    return false;
+    return { ok: false };
   }
+}
+
+// Manual runner to force Calendar OAuth consent and verify access
+function grantCalendarPermissionTest_() {
+  const calendarId = CHECKIN_CALENDAR_ID;
+  if (!calendarId) throw new Error('Missing CHECKIN_CALENDAR_ID script property');
+  const cal = CalendarApp.getCalendarById(calendarId);
+  if (!cal) throw new Error('Calendar not found for ID: ' + calendarId);
+
+  const today = new Date();
+  const title = 'MM Test - Calendar access check';
+  cal.createAllDayEvent(title, today);
+
+  Logger.log('Created test event "%s" on %s in calendar %s', title, today.toDateString(), calendarId);
+  return true;
 }
 
 /*************** 5) SHEET HELPERS (booking, rooms, hdr) **************/
