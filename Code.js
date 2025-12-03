@@ -24,6 +24,9 @@ const QR_IMAGE_URL = `https://drive.google.com/uc?export=view&id=${QR_IMAGE_FILE
 
 const REVENUE_SHEET_ID    = PROPS.getProperty('REVENUE_SHEET_ID');
 
+// 🔸 NEW: Google Calendar for check-in events
+const CHECKIN_CALENDAR_ID = PROPS.getProperty('CHECKIN_CALENDAR_ID') || 'primary';
+
 // Reconcile sheets
 const SH_HORGA_BILLS   = 'Horga_Bills';
 const SH_PAYMENTS_IN   = 'Payments_Inbox';
@@ -824,6 +827,14 @@ function handleCheckinPickerPostback_(event) {
   ];
   pushUserText(ackLines.join('\n'));
   console.log(`Check-in picker saved for ${roomId}: ${thaiDate} ${timeText}`);
+
+  // 🔸 NEW: Create Google Calendar event for this check-in
+  const calendarCreated = _createCheckinCalendarEvent_(roomId, dateOnly, timeText);
+  if (!calendarCreated) {
+    console.warn(`Check-in calendar event creation failed for room ${roomId}`);
+    pushUserText('⚠️ หมายเหตุ: บันทึกปฏิทินไม่สำเร็จ แต่ได้บันทึกวันเช็คอินแล้ว');
+  }
+
   return true;
 }
 
@@ -903,6 +914,75 @@ function handleCheckinPickerTextCommand_(event) {
   return true;
 }
 
+/**
+ * Create a Google Calendar event for check-in
+ * @param {string} roomId - Room identifier
+ * @param {Date} dateOnly - Check-in date
+ * @param {string} timeText - Check-in time (HH:mm format)
+ * @returns {boolean} - Success status
+ */
+function _createCheckinCalendarEvent_(roomId, dateOnly, timeText) {
+  try {
+    if (!CHECKIN_CALENDAR_ID || !roomId || !dateOnly || !timeText) {
+      console.warn('_createCheckinCalendarEvent_: missing required params', { 
+        hasCalendarId: !!CHECKIN_CALENDAR_ID,
+        roomId, 
+        hasDate: !!dateOnly, 
+        timeText 
+      });
+      return false;
+    }
+
+    // Parse time (HH:mm) into hours and minutes
+    const timeParts = String(timeText).split(':');
+    const hours = parseInt(timeParts[0] || '0', 10);
+    const minutes = parseInt(timeParts[1] || '0', 10);
+
+    // Create start datetime (date + time)
+    const startDateTime = new Date(dateOnly);
+    startDateTime.setHours(hours, minutes, 0, 0);
+
+    // Create end datetime (1 hour after start)
+    const endDateTime = new Date(startDateTime);
+    endDateTime.setHours(endDateTime.getHours() + 1);
+
+    // Build event object
+    const event = {
+      title: `✅ Check-in: Room ${roomId}`,
+      description: `Tenant check-in for room ${roomId}\nCheck-in time: ${timeText} น.`,
+      location: `Room ${roomId}`,
+      start: { dateTime: startDateTime.toISOString(), timeZone: CHECKIN_PICKER_TIMEZONE },
+      end: { dateTime: endDateTime.toISOString(), timeZone: CHECKIN_PICKER_TIMEZONE },
+      color: { background: '#51B749' } // Green color for check-in
+    };
+
+    // Create event in calendar
+    const calendar = CalendarApp.getCalendarById(CHECKIN_CALENDAR_ID);
+    if (!calendar) {
+      console.error('_createCheckinCalendarEvent_: Calendar not found with ID ' + CHECKIN_CALENDAR_ID);
+      return false;
+    }
+
+    const createdEvent = calendar.createEvent(
+      event.title,
+      startDateTime,
+      endDateTime,
+      { description: event.description, location: event.location }
+    );
+
+    console.log('Check-in calendar event created:', {
+      eventId: createdEvent.getId(),
+      roomId,
+      date: dateOnly.toISOString().split('T')[0],
+      time: timeText
+    });
+
+    return true;
+  } catch (err) {
+    console.error('_createCheckinCalendarEvent_ error:', String(err));
+    return false;
+  }
+}
 
 /*************** 5) SHEET HELPERS (booking, rooms, hdr) **************/
 function openSheet_() {
