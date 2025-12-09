@@ -424,7 +424,10 @@ function handleSlipImage_(event) {
   const found = findAwaitingRowByUser_(userId);
   if (!found) {
     // Not in reservation flow; respond with a generic helper message
-    return send_(event, [{ type:'text', text:'รับภาพแล้วค่ะ มีอะไรให้ช่วยแจ้งได้เลยนะคะ' }], 0);
+    return send_(event, [{
+      type:'text',
+      text:'ตอนนี้ยังไม่ได้อยู่ในสเต็ปใด ถ้าต้องการส่งสลิปจองพิมพ์รหัส เช่น #MM123 หรือบอกขั้นตอนที่ต้องการค่ะ'
+    }], 0);
   }
 
     // save slip image into temp folder
@@ -488,7 +491,10 @@ function handleIdImage_(event) {
     try { slipInfo = JSON.parse(cache.get(userId) || '{}'); } catch (e) {}
 
     if (!slipInfo.code || !slipInfo.rowIndex) {
-      return send_(event, [{ type: 'text', text: 'ยังไม่พบรายการ กรุณาส่งสลิปใหม่ก่อนค่ะ' }], 0);
+      return send_(event, [{
+        type: 'text',
+        text: 'ยังไม่พบรายการ กรุณาพิมพ์รหัสจอง เช่น #MM123 เพื่อเริ่มใหม่ แล้วส่งสลิปก่อนค่ะ'
+      }], 0);
     }
 
     // save ID image into temp folder
@@ -1922,6 +1928,91 @@ function openRevenueSheetByName_(name) {
   return sh;
 }
 
+function normalizeLedgerYm_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value)) {
+    return Utilities.formatDate(value, 'Asia/Bangkok', 'yyyy-MM');
+  }
+  const s = String(value || '').trim();
+  if (!s) return '';
+  let m = s.match(/^(\d{4})[\/\-]?([01]?\d)$/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}`;
+  m = s.match(/^(\d{4})[\/\-]([01]?\d)[\/\-]\d{1,2}$/);
+  if (m) return `${m[1]}-${String(m[2]).padStart(2,'0')}`;
+  return s;
+}
+
+function toNumberOrNull_(value) {
+  if (value === '' || value === null || value === undefined) return null;
+  const num = Number(value);
+  return isFinite(num) ? num : null;
+}
+
+function firstNonNull_(...values) {
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] !== null && values[i] !== undefined) return values[i];
+  }
+  return null;
+}
+
+function appendReceiptLedger_(entry) {
+  try {
+    const sh = openRevenueSheetByName_('Receipts_Ledger');
+    const hdr = getHeaders_(sh);
+    const writes = [];
+    const setValue = (key, value) => {
+      if (!key || key === 'ReceiptID' || key === 'SlipID') return;
+      const idx = idxOf_(hdr, key);
+      if (idx > -1) writes.push({ col: idx + 1, value: value ?? '' });
+    };
+    const setNumber = (key, value) => {
+      if (value == null) return setValue(key, '');
+      const num = Number(value);
+      setValue(key, isFinite(num) ? num : '');
+    };
+
+    setValue('Date', entry.date || new Date());
+    setValue('YM', normalizeLedgerYm_(entry.ym) || '');
+    setValue('TxnType', entry.txnType || '');
+    setValue('Category', entry.category || '');
+    setNumber('Amount', entry.amount);
+    setValue('BankAccountCode', entry.bankAccountCode || '');
+    setValue('BillID', entry.billId || '');
+    setValue('SlipLink', entry.slipLink || '');
+    setValue('BankTxnID', entry.bankTxnId || '');
+    setValue('LineUserId', entry.lineUserId || '');
+    setValue('Source', entry.source || '');
+    setValue('Note', entry.note || '');
+
+    const startRow = 2;
+    const maxRows = Math.max(sh.getMaxRows(), startRow);
+    const checkCols = Math.min(Math.max(hdr.length - 1, 1), 13);
+    const rowsToCheck = Math.max(maxRows - startRow + 1, 1);
+    const dataCheck = sh.getRange(startRow, 2, rowsToCheck, checkCols).getValues();
+    let lastDataRow = startRow - 1;
+    for (let i = dataCheck.length - 1; i >= 0; i--) {
+      const rowValues = dataCheck[i];
+      if (rowValues.some(cell => cell !== '' && cell != null)) {
+        lastDataRow = startRow + i;
+        break;
+      }
+    }
+    const targetRow = Math.max(lastDataRow + 1, startRow);
+    if (targetRow > sh.getMaxRows()) {
+      sh.insertRowsAfter(sh.getMaxRows(), targetRow - sh.getMaxRows());
+    }
+
+    writes.forEach(({ col, value }) => {
+      sh.getRange(targetRow, col).setValue(value);
+    });
+
+    Logger.log('appendReceiptLedger_: appended row %s bill=%s amount=%s', targetRow, entry.billId, entry.amount);
+    return targetRow;
+  } catch (err) {
+    Logger.log('appendReceiptLedger_ failed: ' + err);
+    return '';
+  }
+}
+
 
 /*************** 9) ADMIN / DIAGNOSTICS / TRIGGERS / NOTIFY ***************/
 function initAuth() {
@@ -2028,12 +2119,24 @@ function getBillAccountById_(billId){
   const hdr = getHeaders_(sh);
   const cBill   = idxOf_(hdr, 'billid');
   const cAcc    = idxOf_(hdr, 'account');
+  const cAmt    = idxOf_(hdr, 'amountdue');
+  const cMonth  = idxOf_(hdr, 'month');
+  const cRoom   = idxOf_(hdr, 'room');
   if (cBill < 0) throw new Error('Horga_Bills missing BillID col');
   const vals = sh.getRange(2,1,Math.max(0,sh.getLastRow()-1), sh.getLastColumn()).getValues();
   for (let i=0;i<vals.length;i++) {
     if (String(vals[i][cBill]).trim() === String(billId).trim()) {
       const account = cAcc > -1 ? String(vals[i][cAcc]||'').trim().toUpperCase() : '';
-      return { account, rowIndex: i+2 };
+      const amountDue = cAmt > -1 ? toNumberOrNull_(vals[i][cAmt]) : null;
+      const monthVal  = cMonth > -1 ? vals[i][cMonth] : '';
+      const roomVal   = cRoom > -1 ? String(vals[i][cRoom] || '').trim().toUpperCase() : '';
+      return {
+        account,
+        rowIndex: i+2,
+        amountDue: (amountDue != null ? amountDue : null),
+        month: monthVal,
+        room: roomVal
+      };
     }
   }
   throw new Error('Bill not found: ' + billId);
@@ -2102,22 +2205,38 @@ function onReviewQueueEdit_(e) {
     const slipId     = String(get('SlipID') || '').trim();
     const billId     = String(get('ApplyBillID') || get('BillID') || '').trim();
     const adjAmt     = get('AdjustedAmount'); // optional
+    const adjAmtNumber = toNumberOrNull_(adjAmt);
     const userId     = String(get('LineUserID') || '').trim();
+    const amountDueFromRow = toNumberOrNull_(get('AmountDue'));
+    const declaredAmtFromRow = toNumberOrNull_(get('AmountDecl'));
+    const monthFromRow = get('Month');
+    const resolvedAt = get('ResolvedAt');
+    const alreadyResolved = !!resolvedAt;
     let roomLabel    = '';
 
     if (decision === 'APPROVE') {
       let bankMatchStatus = '';
+      let inboxMeta = { slipUrl: '', lineUserId: '', ocrAmount: null, declaredAmount: null };
       const inbox = findInboxRowBySlipId_(slipId);
       const billMeta = getBillAccountById_(billId);
+      roomLabel = roomLabel || billMeta.room || '';
       if (inbox) {
         const shIn = openRevenueSheetByName_('Payments_Inbox');
         const hIn  = inbox.headers;
-        const cAcc = idxOf_(hIn, 'ocr_accountcode');
-        const cBk  = idxOf_(hIn, 'ocr_bank');
-        const cRoom= idxOf_(hIn, 'room');
-        const ocrAccCode = cAcc > -1 ? String(shIn.getRange(inbox.rowIndex, cAcc+1).getValue() || '').trim().toUpperCase() : '';
-        const ocrBank     = cBk  > -1 ? String(shIn.getRange(inbox.rowIndex, cBk+1).getValue()  || '').trim().toUpperCase() : '';
-        roomLabel = cRoom > -1 ? String(shIn.getRange(inbox.rowIndex, cRoom+1).getValue() || '').trim().toUpperCase() : '';
+        const rowVals = shIn.getRange(inbox.rowIndex, 1, 1, hIn.length).getValues()[0] || [];
+        const valOf = (key) => {
+          const idx = idxOf_(hIn, key);
+          return idx > -1 ? rowVals[idx] : '';
+        };
+        const ocrAccCode = String(valOf('ocr_accountcode') || '').trim().toUpperCase();
+        const ocrBank    = String(valOf('ocr_bank') || '').trim().toUpperCase();
+        roomLabel = String(valOf('room') || '').trim().toUpperCase() || roomLabel;
+        inboxMeta = {
+          slipUrl: valOf('slipurl') || '',
+          lineUserId: String(valOf('lineuserid') || '').trim(),
+          ocrAmount: toNumberOrNull_(valOf('ocr_amount')) ?? toNumberOrNull_(valOf('ocramount')),
+          declaredAmount: toNumberOrNull_(valOf('amountdecl'))
+        };
         bankMatchStatus = deriveBankMatchStatus_(billMeta.account, ocrAccCode, ocrBank);
 
         const cSt  = idxOf_(hIn, 'matchstatus');
@@ -2128,8 +2247,42 @@ function onReviewQueueEdit_(e) {
         if (cId > -1) shIn.getRange(inbox.rowIndex, cId+1).setValue(billId);
         if (cCf > -1) shIn.getRange(inbox.rowIndex, cCf+1).setValue(1.0);
         if (cNt > -1) shIn.getRange(inbox.rowIndex, cNt+1).setValue(
-          `approved by admin${adjAmt ? '; adjAmt=' + Number(adjAmt) : ''}`
+          `approved by admin${adjAmtNumber != null ? '; adjAmt=' + adjAmtNumber : ''}`
         );
+      }
+
+      if (!alreadyResolved) {
+        const ledgerAmount = firstNonNull_(
+          adjAmtNumber,
+          billMeta.amountDue,
+          amountDueFromRow,
+          declaredAmtFromRow,
+          inboxMeta.ocrAmount,
+          inboxMeta.declaredAmount
+        );
+        const ledgerYm = normalizeLedgerYm_(billMeta.month || monthFromRow || '');
+        const ledgerNoteParts = [
+          'Manual approve via Review_Queue',
+          roomLabel ? `Room ${roomLabel}` : '',
+          adjAmtNumber != null ? `AdjAmt=${adjAmtNumber}` : ''
+        ].filter(Boolean);
+        const ledgerRow = appendReceiptLedger_({
+          ym: ledgerYm,
+          txnType: 'RentPayment',
+          category: 'RENT_PAYMENT',
+          amount: ledgerAmount,
+          bankAccountCode: billMeta.account,
+          billId,
+          slipId,
+          slipLink: inboxMeta.slipUrl,
+          bankTxnId: '',
+          lineUserId: userId || inboxMeta.lineUserId || '',
+          source: 'MM_REVIEW_MANUAL',
+          note: ledgerNoteParts.join(' | ')
+        });
+        if (!ledgerRow) {
+          Logger.log('appendReceiptLedger_ failed for manual approval slip=%s bill=%s', slipId, billId);
+        }
       }
 
       // 1) Mark bill as Slip Received
@@ -2144,7 +2297,7 @@ function onReviewQueueEdit_(e) {
         billId ? `บิล: ${billId}` : '',
         slipId ? `SlipID: ${slipId}` : '',
         bankMatchStatus ? `สถานะบัญชี: ${bankMatchStatus}` : '',
-        adjAmt ? `ยอดปรับ: ${adjAmt}` : ''
+        adjAmtNumber != null ? `ยอดปรับ: ${adjAmtNumber}` : ''
       ].filter(Boolean).join('\n'));
       if (userId) pushMessage(userId, [{ type:'text', text:'✅ ยืนยันยอดเรียบร้อย ขอบคุณค่ะ' }]);
     }
