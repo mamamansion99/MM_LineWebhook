@@ -2253,12 +2253,12 @@ function onReviewQueueEdit_(e) {
 
       if (!alreadyResolved) {
         const ledgerAmount = firstNonNull_(
+          inboxMeta.ocrAmount,
+          inboxMeta.declaredAmount,
+          declaredAmtFromRow,
           adjAmtNumber,
           billMeta.amountDue,
-          amountDueFromRow,
-          declaredAmtFromRow,
-          inboxMeta.ocrAmount,
-          inboxMeta.declaredAmount
+          amountDueFromRow
         );
         const ledgerYm = normalizeLedgerYm_(billMeta.month || monthFromRow || '');
         const ledgerNoteParts = [
@@ -2272,7 +2272,7 @@ function onReviewQueueEdit_(e) {
           category: 'RENT_PAYMENT',
           amount: ledgerAmount,
           bankAccountCode: billMeta.account,
-          billId,
+          billId: '',
           slipId,
           slipLink: inboxMeta.slipUrl,
           bankTxnId: '',
