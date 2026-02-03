@@ -818,6 +818,7 @@ function handleCheckinPickerPostback_(event) {
   }
 
   const dateOnly = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate());
+  const dateText = Utilities.formatDate(selected, CHECKIN_PICKER_TIMEZONE, 'yyyy-MM-dd');
   const timeText = Utilities.formatDate(selected, CHECKIN_PICKER_TIMEZONE, 'HH:mm');
   const updateResult = _updateRoomCheckinSelection_(roomId, { dateOnly, timeText });
 
@@ -833,6 +834,7 @@ function handleCheckinPickerPostback_(event) {
     userId,
     reservationId: data.reservationId || data.reservation_id || data.resId || data.res_id || data.reservation || data.res || '',
     dateOnly,
+    dateText,
     timeText
   });
   if (!resUpdate.ok) {
@@ -909,6 +911,7 @@ function _updateV2ReservationCheckin_(opts) {
   const userId = String(payload.userId || '').trim();
   const reservationId = String(payload.reservationId || '').trim();
   const dateOnly = payload.dateOnly instanceof Date ? payload.dateOnly : null;
+  const dateText = String(payload.dateText || '').trim();
   const timeText = String(payload.timeText || '').trim();
 
   if (!MM_V2_SPREADSHEET_ID) {
@@ -986,10 +989,19 @@ function _updateV2ReservationCheckin_(opts) {
     return { ok: false, reason: 'no_matching_row', roomId, userId, reservationId };
   }
 
-  if (colConf >= 0 && dateOnly) sh.getRange(rowIndex, colConf + 1).setValue(dateOnly);
+  if (colConf >= 0) {
+    if (dateText) {
+      const cell = sh.getRange(rowIndex, colConf + 1);
+      cell.setValue(dateText);
+      cell.setNumberFormat('yyyy-mm-dd');
+    } else if (dateOnly) {
+      sh.getRange(rowIndex, colConf + 1).setValue(dateOnly);
+    }
+  }
   if (colConfTime >= 0 && timeText) {
-    const timeValue = _timeToSheetValue_(timeText);
-    sh.getRange(rowIndex, colConfTime + 1).setValue(timeValue || timeText);
+    const cell = sh.getRange(rowIndex, colConfTime + 1);
+    cell.setValue(timeText);
+    cell.setNumberFormat('hh:mm');
   }
   return { ok: true, rowIndex };
 }
