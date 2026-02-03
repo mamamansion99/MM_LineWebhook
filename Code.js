@@ -54,13 +54,14 @@ const ADMIN_GROUP_ID = PropertiesService.getScriptProperties().getProperty('ADMI
 const FRONTEND_BASE = PROPS.getProperty('FRONTEND_BASE') || 'https://mama-moveout.pages.dev/';
 
 // Check-in picker configuration
-const CHECKIN_PICKER_MAX_DATETIME = '2026-01-14T18:00';
+const CHECKIN_PICKER_MAX_DATETIME = '';
+const CHECKIN_PICKER_DISABLE_MAX = true;
 const CHECKIN_PICKER_TIMEZONE = 'Asia/Bangkok';
 const CHECKIN_PICKER_TZ_OFFSET = '+07:00';
 const CHECKIN_PICKER_EARLIEST_MINUTES = 10 * 60;
 const CHECKIN_PICKER_EARLIEST_TIME_LABEL = '10:00';
-const CHECKIN_PICKER_LATEST_MINUTES = 18 * 60;
-const CHECKIN_PICKER_LATEST_TIME_LABEL = '18:00';
+const CHECKIN_PICKER_LATEST_MINUTES = (16 * 60) + 30;
+const CHECKIN_PICKER_LATEST_TIME_LABEL = '16:30';
 const CHECKIN_PICKER_COMMAND_KEYWORDS = [
   'เปลี่ยนวันเช็คอิน',
   'เปลี่ยนวันที่เช็คอิน',
@@ -756,7 +757,9 @@ function handleCheckinPickerPostback_(event) {
   const source = event.source || {};
   const userId = String(source.userId || '').trim();
   const roomId = String(data.room || '').trim() || (userId ? _findRoomByUserId_(userId) : '');
-  const pickerMax = CHECKIN_PICKER_MAX_DATETIME ? _parseLineDatetimeValue_(CHECKIN_PICKER_MAX_DATETIME) : null;
+  const pickerMax = (!CHECKIN_PICKER_DISABLE_MAX && CHECKIN_PICKER_MAX_DATETIME)
+    ? _parseLineDatetimeValue_(CHECKIN_PICKER_MAX_DATETIME)
+    : null;
   const maxThaiDate = pickerMax ? _thaiDate_(pickerMax) : '';
 
   const pushUserText = (txt) => {
@@ -2585,6 +2588,15 @@ function testGroupApproveCard() {
 function sendCheckinPickerToUser(userId, roomId) {
   if (!userId) throw new Error('sendCheckinPickerToUser: missing userId');
   const pickerData = _buildPostbackData_({ act: 'checkin_pick', room: roomId || '' }) || 'act=checkin_pick';
+  const dateAction = {
+    type: 'datetimepicker',
+    label: 'เลือกวัน–เวลา',
+    data: pickerData,
+    mode: 'datetime'
+  };
+  if (!CHECKIN_PICKER_DISABLE_MAX && CHECKIN_PICKER_MAX_DATETIME) {
+    dateAction.max = CHECKIN_PICKER_MAX_DATETIME;
+  }
   const payload = {
     to: userId,
     messages: [{
@@ -2594,13 +2606,7 @@ function sendCheckinPickerToUser(userId, roomId) {
         type: 'confirm',
         text: `ห้อง ${roomId || '-'}\nโปรดเลือกวัน–เวลาเช็คอิน (${CHECKIN_PICKER_EARLIEST_TIME_LABEL}-${CHECKIN_PICKER_LATEST_TIME_LABEL} น. เท่านั้น)`,
         actions: [
-          {
-            type: 'datetimepicker',
-            label: 'เลือกวัน–เวลา',
-            data: pickerData,
-            mode: 'datetime',
-            max: CHECKIN_PICKER_MAX_DATETIME
-          },
+          dateAction,
           { type: 'postback', label: 'ยกเลิก', data: 'act=rent_cancel' }
         ]
       }
