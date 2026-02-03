@@ -10,6 +10,8 @@ const LINE_NOTIFY_TOKEN = PROPS.getProperty('LINE_NOTIFY_TOKEN'); // create a LI
 
 const SHEET_ID            = PROPS.getProperty('SHEET_ID');
 const SHEET_NAME          = PROPS.getProperty('SHEET_NAME') || 'Sheet1';
+const MM_V2_SPREADSHEET_ID = String(PROPS.getProperty('MM_V2_SPREADSHEET_ID') || '1kNjvjm-fO2-5syBDhYjeoOZ3ZkHFuEVnax2S4rNj23s').trim();
+const MM_V2_RESERVATIONS_SHEET = PROPS.getProperty('MM_V2_RESERVATIONS_SHEET') || 'Reservations';
 
 // 🔸 NEW: Payment Slip folders
 const SLIP_FOLDER_ID      = PROPS.getProperty('SLIP_FOLDER_ID');
@@ -825,6 +827,18 @@ function handleCheckinPickerPostback_(event) {
     return true;
   }
 
+  // Best-effort: also update MM_V2 Reservations sheet (if configured)
+  const resUpdate = _updateV2ReservationCheckin_({
+    roomId,
+    userId,
+    reservationId: data.reservationId || data.reservation_id || data.resId || data.res_id || data.reservation || data.res || '',
+    dateOnly,
+    timeText
+  });
+  if (!resUpdate.ok) {
+    console.warn('MM_V2 reservation update skipped', resUpdate);
+  }
+
   const thaiDate = _thaiDate_(dateOnly);
   const ackLines = [
     `บันทึกวันเช็คอินของห้อง ${roomId} แล้วค่ะ 🙏`,
@@ -887,6 +901,118 @@ function _saveRoomCheckinEventId_(row, eventId) {
   if (!cEvent) return false;
   sh.getRange(row, cEvent).setValue(eventId || '');
   return true;
+}
+
+function _updateV2ReservationCheckin_(opts) {
+  const payload = opts || {};
+  const roomId = String(payload.roomId || '').trim().toUpperCase();
+  const userId = String(payload.userId || '').trim();
+  const reservationId = String(payload.reservationId || '').trim();
+  const dateOnly = payload.dateOnly instanceof Date ? payload.dateOnly : null;
+  const timeText = String(payload.timeText || '').trim();
+
+  if (!MM_V2_SPREADSHEET_ID) {
+    return { ok: false, reason: 'missing_MM_V2_SPREADSHEET_ID' };
+  }
+  const ss = SpreadsheetApp.openById(MM_V2_SPREADSHEET_ID);
+  const sh = ss.getSheetByName(MM_V2_RESERVATIONS_SHEET);
+  if (!sh) return { ok: false, reason: 'missing_Reservations_sheet' };
+
+  const values = sh.getDataRange().getValues();
+  if (values.length < 2) return { ok: false, reason: 'no_rows' };
+
+  const headers = values[0].map(h => String(h || '').trim());
+  const colResId = hdrIdx(headers, ['reservationid', 'reservation id', 'res id', 'resid', 'booking id', 'booking', 'code', 'รหัสการจอง', 'รหัสจอง']);
+  const colRoom = hdrIdx(headers, ['roomid', 'room id', 'room', 'ห้อง']);
+  const colLine = hdrIdx(headers, ['lineuserid', 'line user id', 'line user', 'lineid', 'line id', 'ผู้ใช้ไลน์']);
+  const colConf = hdrIdx(headers, [
+    'confirmedmovein',
+    'confirmed movein',
+    'confirmed move in',
+    'confirmed move-in',
+    'confirmedmoveindate',
+    'confirmed movein date',
+    'confirmed move-in date',
+    'confirmed date',
+    'วันเข้าอยู่จริง',
+    'วันเข้าอยู่ยืนยัน'
+  ]);
+  const colConfTime = hdrIdx(headers, [
+    'confirmedmoveintime',
+    'confirmed movein time',
+    'confirmed time',
+    'movein time',
+    'checkin time',
+    'เวลาเข้าอยู่'
+  ]);
+
+  if (colConf < 0 && colConfTime < 0) {
+    return { ok: false, reason: 'missing_confirmed_columns' };
+  }
+
+  const normResId = (v) => String(v || '').trim().toUpperCase().replace(/^#/, '');
+  const wantRes = normResId(reservationId);
+
+  let rowIndex = -1;
+  if (wantRes && colResId >= 0) {
+    rowIndex = _findReservationRowById_(values, colResId, wantRes);
+  }
+
+  if (rowIndex < 0 && (roomId || userId)) {
+    for (let i = values.length - 1; i >= 1; i--) {
+      const rowRoom = colRoom >= 0 ? String(values[i][colRoom] || '').trim().toUpperCase() : '';
+      const rowUser = colLine >= 0 ? String(values[i][colLine] || '').trim() : '';
+      if (roomId && userId) {
+        if (rowRoom === roomId && rowUser === userId) { rowIndex = i + 1; break; }
+      }
+    }
+  }
+
+  if (rowIndex < 0 && roomId) {
+    for (let i = values.length - 1; i >= 1; i--) {
+      const rowRoom = colRoom >= 0 ? String(values[i][colRoom] || '').trim().toUpperCase() : '';
+      if (rowRoom === roomId) { rowIndex = i + 1; break; }
+    }
+  }
+
+  if (rowIndex < 0 && userId) {
+    for (let i = values.length - 1; i >= 1; i--) {
+      const rowUser = colLine >= 0 ? String(values[i][colLine] || '').trim() : '';
+      if (rowUser === userId) { rowIndex = i + 1; break; }
+    }
+  }
+
+  if (rowIndex < 0) {
+    return { ok: false, reason: 'no_matching_row', roomId, userId, reservationId };
+  }
+
+  if (colConf >= 0 && dateOnly) sh.getRange(rowIndex, colConf + 1).setValue(dateOnly);
+  if (colConfTime >= 0 && timeText) {
+    const timeValue = _timeToSheetValue_(timeText);
+    sh.getRange(rowIndex, colConfTime + 1).setValue(timeValue || timeText);
+  }
+  return { ok: true, rowIndex };
+}
+
+function _findReservationRowById_(values, colResId, wantRes) {
+  if (!Array.isArray(values) || colResId < 0 || !wantRes) return -1;
+  for (let i = values.length - 1; i >= 1; i--) {
+    const cell = String(values[i][colResId] || '').trim().toUpperCase().replace(/^#/, '');
+    if (cell === wantRes) return i + 1;
+  }
+  return -1;
+}
+
+function _timeToSheetValue_(timeText) {
+  const raw = String(timeText || '').trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  // Use Sheets' time-only convention (base date 1899-12-30)
+  return new Date(1899, 11, 30, hours, minutes, 0, 0);
 }
 
 function _thaiDate_(date) {
