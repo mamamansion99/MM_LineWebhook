@@ -54,8 +54,6 @@ const ADMIN_GROUP_ID = PropertiesService.getScriptProperties().getProperty('ADMI
 const FRONTEND_BASE = PROPS.getProperty('FRONTEND_BASE') || 'https://mama-moveout.pages.dev/';
 
 // Check-in picker configuration
-const CHECKIN_PICKER_MAX_DATETIME = '';
-const CHECKIN_PICKER_DISABLE_MAX = true;
 const CHECKIN_PICKER_TIMEZONE = 'Asia/Bangkok';
 const CHECKIN_PICKER_TZ_OFFSET = '+07:00';
 const CHECKIN_PICKER_EARLIEST_MINUTES = 10 * 60;
@@ -757,11 +755,6 @@ function handleCheckinPickerPostback_(event) {
   const source = event.source || {};
   const userId = String(source.userId || '').trim();
   const roomId = String(data.room || '').trim() || (userId ? _findRoomByUserId_(userId) : '');
-  const pickerMax = (!CHECKIN_PICKER_DISABLE_MAX && CHECKIN_PICKER_MAX_DATETIME)
-    ? _parseLineDatetimeValue_(CHECKIN_PICKER_MAX_DATETIME)
-    : null;
-  const maxThaiDate = pickerMax ? _thaiDate_(pickerMax) : '';
-
   const pushUserText = (txt) => {
     if (userId && txt) {
       pushMessage(userId, [{ type: 'text', text: txt }]);
@@ -803,14 +796,6 @@ function handleCheckinPickerPostback_(event) {
   const selected = _parseLineDatetimeValue_(datetimeRaw);
   if (!selected) {
     pushUserText('ไม่สามารถอ่านค่าวันที่/เวลาได้ กรุณาเลือกใหม่ค่ะ 🙏');
-    if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
-    return true;
-  }
-
-  if (pickerMax && selected.getTime() > pickerMax.getTime()) {
-    pushUserText(
-      `วันเช็คอินที่เลือกเกินช่วงที่กำหนดไว้ กรุณาเลือกวันก่อน ${maxThaiDate || '15 ม.ค. 2026'} ค่ะ 🙏`
-    );
     if (userId && roomId) sendCheckinPickerToUser(userId, roomId);
     return true;
   }
@@ -2594,9 +2579,6 @@ function sendCheckinPickerToUser(userId, roomId) {
     data: pickerData,
     mode: 'datetime'
   };
-  if (!CHECKIN_PICKER_DISABLE_MAX && CHECKIN_PICKER_MAX_DATETIME) {
-    dateAction.max = CHECKIN_PICKER_MAX_DATETIME;
-  }
   const payload = {
     to: userId,
     messages: [{
