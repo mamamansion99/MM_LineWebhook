@@ -28,6 +28,8 @@ const REVENUE_SHEET_ID    = PROPS.getProperty('REVENUE_SHEET_ID');
 
 // 🔸 NEW: Google Calendar for check-in events
 const CHECKIN_CALENDAR_ID = PROPS.getProperty('CHECKIN_CALENDAR_ID') || 'primary';
+const CHECKIN_CALENDAR_SUBJECT_TEMPLATE =
+  PROPS.getProperty('CHECKIN_CALENDAR_SUBJECT_TEMPLATE') || '\u2705{{roomId}} CheckIn';
 
 // Reconcile sheets
 const SH_HORGA_BILLS   = 'Horga_Bills';
@@ -817,10 +819,13 @@ function handleCheckinPickerPostback_(event) {
   }
 
   // Best-effort: also update MM_V2 Reservations sheet (if configured)
+  const reservationId = String(
+    data.reservationId || data.reservation_id || data.resId || data.res_id || data.reservation || data.res || ''
+  ).trim();
   const resUpdate = _updateV2ReservationCheckin_({
     roomId,
     userId,
-    reservationId: data.reservationId || data.reservation_id || data.resId || data.res_id || data.reservation || data.res || '',
+    reservationId,
     dateOnly,
     dateText,
     timeText
@@ -839,7 +844,13 @@ function handleCheckinPickerPostback_(event) {
   console.log(`Check-in picker saved for ${roomId}: ${thaiDate} ${timeText}`);
 
   // 🔸 NEW: Create Google Calendar event for this check-in
-  const calendarCreated = _createCheckinCalendarEvent_(roomId, dateOnly, timeText, updateResult.prevEventId);
+  const calendarCreated = _createCheckinCalendarEvent_(
+    roomId,
+    dateOnly,
+    timeText,
+    updateResult.prevEventId,
+    { reservationId, userId }
+  );
   if (!calendarCreated.ok) {
     console.warn(`Check-in calendar event creation failed for room ${roomId}`);
     pushUserText('⚠️ หมายเหตุ: บันทึกปฏิทินไม่สำเร็จ แต่ได้บันทึกวันเช็คอินแล้ว');
@@ -1068,16 +1079,17 @@ function handleCheckinPickerTextCommand_(event) {
  * @param {Date} dateOnly - Check-in date
  * @param {string} timeText - Check-in time (HH:mm format)
  * @param {string=} oldEventId - Previous event ID to delete
+ * @param {{reservationId?:string,userId?:string}=} meta - Parsed postback metadata
  * @returns {{ok:boolean, eventId?:string}} - Success status and eventId
  */
-function _createCheckinCalendarEvent_(roomId, dateOnly, timeText, oldEventId) {
+function _createCheckinCalendarEvent_(roomId, dateOnly, timeText, oldEventId, meta) {
   try {
     if (!CHECKIN_CALENDAR_ID || !roomId || !dateOnly || !timeText) {
-      console.warn('_createCheckinCalendarEvent_: missing required params', { 
+      console.warn('_createCheckinCalendarEvent_: missing required params', {
         hasCalendarId: !!CHECKIN_CALENDAR_ID,
-        roomId, 
-        hasDate: !!dateOnly, 
-        timeText 
+        roomId,
+        hasDate: !!dateOnly,
+        timeText
       });
       return false;
     }
@@ -1095,10 +1107,22 @@ function _createCheckinCalendarEvent_(roomId, dateOnly, timeText, oldEventId) {
     const endDateTime = new Date(startDateTime);
     endDateTime.setHours(endDateTime.getHours() + 1);
 
-    // Build event object
+    const reservationId = String(meta?.reservationId || '').trim();
+    const dateText = Utilities.formatDate(startDateTime, CHECKIN_PICKER_TIMEZONE, 'yyyy-MM-dd');
+    const eventTitle = _renderCheckinCalendarSubject_({
+      roomId,
+      reservationId,
+      date: dateText,
+      time: timeText,
+      lineUserId: String(meta?.userId || '').trim()
+    });
+    const descriptionLines = [`Tenant check-in for room ${roomId}`];
+    if (reservationId) descriptionLines.push(`Reservation ID: ${reservationId}`);
+    descriptionLines.push(`Check-in time: ${timeText} น.`);
+
     const event = {
-      title: `✅ Check-in: Room ${roomId}`,
-      description: `Tenant check-in for room ${roomId}\nCheck-in time: ${timeText} น.`,
+      title: eventTitle,
+      description: descriptionLines.join('\n'),
       location: `Room ${roomId}`,
       start: { dateTime: startDateTime.toISOString(), timeZone: CHECKIN_PICKER_TIMEZONE },
       end: { dateTime: endDateTime.toISOString(), timeZone: CHECKIN_PICKER_TIMEZONE }
@@ -1140,7 +1164,9 @@ function _createCheckinCalendarEvent_(roomId, dateOnly, timeText, oldEventId) {
       eventId,
       roomId,
       date: dateOnly.toISOString().split('T')[0],
-      time: timeText
+      time: timeText,
+      subject: eventTitle,
+      reservationId
     });
 
     return { ok: true, eventId };
@@ -1148,6 +1174,22 @@ function _createCheckinCalendarEvent_(roomId, dateOnly, timeText, oldEventId) {
     console.error('_createCheckinCalendarEvent_ error:', String(err));
     return { ok: false };
   }
+}
+
+function _renderCheckinCalendarSubject_(context) {
+  const values = {
+    roomId: String(context?.roomId || '').trim(),
+    reservationId: String(context?.reservationId || '').trim(),
+    date: String(context?.date || '').trim(),
+    time: String(context?.time || '').trim(),
+    lineUserId: String(context?.lineUserId || '').trim()
+  };
+  const fallback = values.roomId ? `\u2705${values.roomId} CheckIn` : '\u2705 CheckIn';
+  const template = String(CHECKIN_CALENDAR_SUBJECT_TEMPLATE || '').trim() || '\u2705{{roomId}} CheckIn';
+  const rendered = template.replace(/\{\{\s*(roomId|reservationId|date|time|lineUserId)\s*\}\}/g, function (_, key) {
+    return values[key] || '-';
+  }).trim();
+  return rendered || fallback;
 }
 
 // Manual runner to force Calendar OAuth consent and verify access
