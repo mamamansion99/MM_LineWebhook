@@ -1358,17 +1358,27 @@ function findAwaitingRowByUser_(userId) {
   if (lastRow < 2) return null;
 
   const headers = sh.getRange(1,1,1,lastCol).getValues()[0].map(h => String(h||'').trim());
-  const colCode   = (headers.findIndex(h => h.toLowerCase().includes('รหัสการจอง')) + 1) || 1;
-  const colStatus = headers.findIndex(h => h.toLowerCase().includes('status')) + 1;
-  const colUserId = headers.findIndex(h => h.trim().toLowerCase() === 'line user id') + 1;
-  const colRoom   = headers.findIndex(h => h.toLowerCase().includes('room')) + 1;
+  const colCode = Math.max(
+    hdrIdx(headers, ['รหัสการจอง', 'reservation id', 'booking code', 'code', 'booking']),
+    0
+  ) + 1;
+  const colStatus = hdrIdx(headers, ['status', 'สถานะ']) + 1;
+  const colUserId = hdrIdx(headers, ['line user id', 'line userid', 'line id', 'ผู้ใช้ไลน์']) + 1;
+  const colRoom   = hdrIdx(headers, ['room id', 'room', 'ห้อง']) + 1;
 
   if (!colStatus || !colUserId) return null;
 
   const values = sh.getRange(2,1,lastRow-1,lastCol).getValues();
+  const targetUser = String(userId || '').trim().toLowerCase();
   for (let r = values.length - 1; r >= 0; r--) {
-    if (String(values[r][colUserId-1]).trim() === userId &&
-        String(values[r][colStatus-1]).trim() === 'Awaiting Payment') {
+    const rowUserId = String(values[r][colUserId - 1] || '').trim().toLowerCase();
+    const rowStatus = String(values[r][colStatus - 1] || '').trim().toLowerCase();
+    const isAwaitingPayment = (
+      rowStatus === 'awaiting payment' ||
+      rowStatus === 'รอชำระ' ||
+      rowStatus === 'รอยืนยันการชำระ'
+    );
+    if (rowUserId === targetUser && isAwaitingPayment) {
       const codeKey = String(values[r][colCode-1]).trim().toUpperCase().replace(/^#/, '');
       const roomId  = colRoom ? String(values[r][colRoom-1] || '').trim().toUpperCase() : '';
       return { rowIndex: r + 2, code: codeKey, roomId };
