@@ -841,6 +841,11 @@ function handleCheckinPickerPostback_(event) {
     'หากต้องการปรับเปลี่ยน สามารถกดเลือกใหม่จากปุ่มเดิมได้เลยค่ะ'
   ];
   pushUserText(ackLines.join('\n'));
+  pushUserText([
+    'หมายเหตุ: หากมาถึงหลังเวลา 18:00 น. ทางหอขออนุญาตเก็บค่าบริการนอกเวลาทำการของเจ้าหน้าที่ 100 บาทค่ะ',
+    '',
+    'เราเข้าใจว่าบางครั้งอาจมีเหตุสุดวิสัยจริงๆ แต่เนื่องจากเป็นช่วงนอกเวลาทำการของเจ้าหน้าที่ จึงจำเป็นต้องมีค่าบริการส่วนนี้ค่ะ 🙏'
+  ].join('\n'));
   console.log(`Check-in picker saved for ${roomId}: ${thaiDate} ${timeText}`);
 
   // 🔸 NEW: Create Google Calendar event for this check-in
