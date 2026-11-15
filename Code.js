@@ -191,6 +191,52 @@ if (isEvents) {
   }
 }
 
+/*************** CHAT-LOG MIRROR ***************/
+// Pushes/replies made here go straight to LINE, so the worker never sees them and
+// the staff inbox would miss the check-in picker card and the ack texts.
+// Mirror each 1:1 message to MM_LOG (handler reservation_gas → MM_LOG forwards to inbox).
+const MM_LOG_WEBHOOK_URL_ = 'https://n8n.srv1112305.hstgr.cloud/webhook/MM_LOG';
+
+function _summarizePushForChatLog_(messages) {
+  return (messages || []).map(function (m) {
+    if (!m) return '';
+    if (m.type === 'text') return String(m.text || '');
+    if (m.type === 'template' && m.template) {
+      const labels = (m.template.actions || []).map(function (a) { return a && a.label; }).filter(Boolean).join(' / ');
+      return '[การ์ด] ' + String(m.template.text || m.altText || '') + (labels ? '\n[ปุ่ม: ' + labels + ']' : '');
+    }
+    if (m.altText) return '[' + m.type + '] ' + m.altText;
+    return '[' + (m.type || 'message') + ']';
+  }).join('\n---\n').slice(0, 1500);
+}
+
+function _mirrorPushToChatLog_(targetId, messages, eventType) {
+  try {
+    const id = String(targetId || '');
+    if (id.charAt(0) !== 'U') return;
+    let cards = '';
+    try { const j = JSON.stringify(messages || []); cards = j.length <= 50000 ? j : ''; } catch (_e) {}
+    UrlFetchApp.fetch(MM_LOG_WEBHOOK_URL_, {
+      method: 'post',
+      contentType: 'application/json',
+      muteHttpExceptions: true,
+      payload: JSON.stringify({
+        timestamp: new Date().toISOString(),
+        direction: 'OUT',
+        eventType: eventType || 'push',
+        messageType: (messages || []).map(function (m) { return (m && m.type) || ''; }).join(','),
+        text: _summarizePushForChatLog_(messages),
+        userId: id,
+        chatId: id,
+        sourceType: 'user',
+        handler: 'reservation_gas',
+        logId: 'gas:' + Utilities.getUuid(),
+        messages: cards
+      })
+    });
+  } catch (_err) { /* logging must never block the push */ }
+}
+
 /*************** 3) LINE PUSH / LOADING HELPERS **************/
 function pushMessage(to, messages) {
   if (!to) return;
@@ -206,6 +252,7 @@ function pushMessage(to, messages) {
   };
   const res = UrlFetchApp.fetch(url, options);
   console.log('PUSH_STATUS code=' + res.getResponseCode() + ' body=' + res.getContentText());
+  if (res.getResponseCode() >= 200 && res.getResponseCode() < 300) _mirrorPushToChatLog_(to, messages, 'push');
 }
 
 /*************** LINE REPLY HELPER ***************/
@@ -2662,6 +2709,7 @@ function sendCheckinPickerToUser(userId, roomId) {
     muteHttpExceptions: true
   });
   Logger.log('CHECKIN_PICKER_PUSH code=%s body=%s', res.getResponseCode(), res.getContentText());
+  if (res.getResponseCode() >= 200 && res.getResponseCode() < 300) _mirrorPushToChatLog_(userId, payload.messages, 'push');
 }
 
 /** === TEST: push to *your* LINE ID once === */
@@ -2858,7 +2906,7 @@ function send_(event, messages, withLoadingSecs) {
       });
       const code = res.getResponseCode();
       Logger.log('REPLY_TRY code=%s body=%s', code, res.getContentText());
-      if (code >= 200 && code < 300) return; // success → we're done
+      if (code >= 200 && code < 300) { _mirrorPushToChatLog_(userId, messages, 'reply'); return; } // success → we're done
     } catch (e) {
       Logger.log('REPLY_TRY error: ' + e);
       // fall through to push
