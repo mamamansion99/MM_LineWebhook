@@ -74,6 +74,17 @@ const CHECKIN_PICKER_COMMAND_KEYWORDS = [
 ];
 const OCCUPIED_STATUS_KEYWORDS = ['reserved','occupied','จอง','soon','checked in','check in'];
 
+// กติกาเปลี่ยนวันเช็คอิน (เจ้าของกำหนด 2026-11-21 หลังเคส A207 เลื่อนคืนก่อนเข้า)
+// - เลือกครั้งแรกไม่นับ, เปลี่ยนวันได้ 1 ครั้ง (เปลี่ยนแค่เวลาในวันเดิมไม่นับ)
+// - ต้องเหลืออย่างน้อย 7 วันก่อนวันเดิม และวันใหม่ต้องห่างจากวันนี้อย่างน้อย 7 วัน
+// - เลื่อนช้ากว่าเดิม ค่าเช่ายังเริ่มจากวันเดิม; เลื่อนเร็วขึ้น ค่าเช่าเริ่มวันใหม่
+// - ทุกครั้งที่เปลี่ยน/ถูกปฏิเสธ ลงแท็บ Checkin_Changes ใน MM_V2 และแจ้งกลุ่มเจ้าหน้าที่
+const CHECKIN_CHANGE_MIN_DAYS = 7;
+const CHECKIN_CHANGE_MAX = 1;
+const CHECKIN_CHANGE_LOG_SHEET = 'Checkin_Changes';
+const CHECKIN_CHANGE_LOG_HEADERS = ['Timestamp', 'ReservationID', 'RoomID', 'LineUserId', 'FromDate', 'FromTime', 'ToDate', 'ToTime', 'RentStartDate', 'Result', 'Note'];
+const CHECKIN_CHANGE_STAFF_GROUP_ID = 'C355d5b5c8a01d88bf61296b4e10f1575'; // กลุ่ม MM เจ้าหน้าที่
+
 
 
 function doGet(e) {
@@ -857,6 +868,41 @@ function handleCheckinPickerPostback_(event) {
   const dateOnly = new Date(selected.getFullYear(), selected.getMonth(), selected.getDate());
   const dateText = Utilities.formatDate(selected, CHECKIN_PICKER_TIMEZONE, 'yyyy-MM-dd');
   const timeText = Utilities.formatDate(selected, CHECKIN_PICKER_TIMEZONE, 'HH:mm');
+  const reservationId = String(
+    data.reservationId || data.reservation_id || data.resId || data.res_id || data.reservation || data.res || ''
+  ).trim();
+
+  // กันกดซ้ำพร้อมกันจนนับสิทธิ์เปลี่ยนวันพลาด
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(20000); } catch (_errLock) {
+    pushUserText('ระบบกำลังบันทึกรายการก่อนหน้า กรุณากดเลือกใหม่อีกครั้งในอีกสักครู่ค่ะ 🙏');
+    return true;
+  }
+  try {
+    return _applyCheckinPick_({ roomId, userId, reservationId, dateOnly, dateText, timeText, pushUserText });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function _applyCheckinPick_(ctx) {
+  const { roomId, userId, reservationId, dateOnly, dateText, timeText, pushUserText } = ctx;
+
+  const state = _readV2ReservationCheckinState_({ roomId, userId, reservationId });
+  const gate = _checkinChangeGate_(state, dateText, timeText);
+  if (!gate.allowed) {
+    pushUserText(gate.tenantText);
+    _logCheckinChange_(state, { roomId, userId, reservationId, toDate: dateText, toTime: timeText, result: gate.result, note: gate.note || '' });
+    // วันใหม่ใกล้เกินไป = ลูกค้ากดเลือกใหม่เองได้ ไม่ต้องรบกวนเจ้าหน้าที่
+    if (gate.result !== 'REJECTED_NEWDATE') _notifyStaffCheckinChange_([
+      `⛔ ห้อง ${roomId} ขอเปลี่ยนวันเช็คอิน แต่ผิดกติกา ระบบไม่ได้เปลี่ยนให้`,
+      `ขอ: ${_isoToThai_(state.currentDate)} ${state.currentTime || ''} → ${_isoToThai_(dateText)} ${timeText}`.trim(),
+      `เหตุผล: ${gate.note}`,
+      'ถ้าจะยอมให้เปลี่ยน ให้แก้ Reservations.ConfirmedMoveIn/Time ใน MM_V2 และย้าย event ในปฏิทินเอง'
+    ].join('\n'));
+    return true;
+  }
+
   const updateResult = _updateRoomCheckinSelection_(roomId, { dateOnly, timeText });
 
   if (!updateResult.ok) {
@@ -866,9 +912,6 @@ function handleCheckinPickerPostback_(event) {
   }
 
   // Best-effort: also update MM_V2 Reservations sheet (if configured)
-  const reservationId = String(
-    data.reservationId || data.reservation_id || data.resId || data.res_id || data.reservation || data.res || ''
-  ).trim();
   const resUpdate = _updateV2ReservationCheckin_({
     roomId,
     userId,
@@ -882,12 +925,37 @@ function handleCheckinPickerPostback_(event) {
   }
 
   const thaiDate = _thaiDate_(dateOnly);
-  const ackLines = [
-    `บันทึกวันเช็คอินของห้อง ${roomId} แล้วค่ะ 🙏`,
-    `🗓️ ${thaiDate} เวลา ${timeText} น.`,
-    'หากต้องการปรับเปลี่ยน สามารถกดเลือกใหม่จากปุ่มเดิมได้เลยค่ะ'
-  ];
-  pushUserText(ackLines.join('\n'));
+  if (gate.kind === 'first') {
+    pushUserText([
+      `บันทึกวันเช็คอินของห้อง ${roomId} แล้วค่ะ 🙏`,
+      `🗓️ ${thaiDate} เวลา ${timeText} น.`,
+      '',
+      _checkinChangeRulesText_(dateText)
+    ].join('\n'));
+  } else if (gate.kind === 'time_only') {
+    pushUserText([
+      `เปลี่ยนเวลาเช็คอินของห้อง ${roomId} แล้วค่ะ 🙏`,
+      `🗓️ ${thaiDate} เวลา ${timeText} น. (วันเดิม ไม่นับเป็นการเปลี่ยนวัน)`
+    ].join('\n'));
+  } else {
+    const later = gate.rentStart !== dateText;
+    pushUserText([
+      `เปลี่ยนวันเช็คอินของห้อง ${roomId} แล้วค่ะ 🙏`,
+      `🗓️ เดิม ${_isoToThai_(state.currentDate)} → ใหม่ ${thaiDate} เวลา ${timeText} น.`,
+      '',
+      later
+        ? `💰 ค่าเช่ายังคิดตั้งแต่ ${_isoToThai_(gate.rentStart)} ตามวันที่ลงไว้ครั้งแรกค่ะ เนื่องจากทางหอได้จัดคิวและเร่งงานแม่บ้านทำความสะอาดเตรียมห้องให้พร้อมแล้ว คุณสามารถเข้าอยู่ช้ากว่านั้นได้ตามวันใหม่ค่ะ`
+        : `💰 ค่าเช่าเริ่มคิดตั้งแต่วันใหม่ ${thaiDate} ค่ะ`,
+      '',
+      '⚠️ ใช้สิทธิ์เปลี่ยนวันเช็คอินครบ 1 ครั้งแล้ว หากจำเป็นต้องเปลี่ยนอีก กรุณาพิมพ์แจ้งเจ้าหน้าที่ในแชทนี้ค่ะ'
+    ].join('\n'));
+    _logCheckinChange_(state, { roomId, userId, reservationId, toDate: dateText, toTime: timeText, rentStart: gate.rentStart, result: 'CHANGED' });
+    _notifyStaffCheckinChange_([
+      `🔁 ห้อง ${roomId} เปลี่ยนวันเช็คอิน (ใช้สิทธิ์ 1/1)`,
+      `${_isoToThai_(state.currentDate)} ${state.currentTime || ''} → ${thaiDate} ${timeText}`,
+      `💰 คิดค่าเช่าตั้งแต่ ${_isoToThai_(gate.rentStart)}${later ? ' (วันเดิม เพราะเลื่อนช้าลง)' : ''}`
+    ].join('\n'));
+  }
   pushUserText([
     'หมายเหตุ: หากมาถึงหลังเวลา 18:00 น. ทางหอขออนุญาตเก็บค่าบริการนอกเวลาทำการของเจ้าหน้าที่ 100 บาทค่ะ',
     '',
@@ -911,6 +979,231 @@ function handleCheckinPickerPostback_(event) {
   }
 
   return true;
+}
+
+/*************** กติกาเปลี่ยนวันเช็คอิน ***************/
+function _isoDayNumber_(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return NaN;
+  return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86400000;
+}
+
+function _isoAddDays_(iso, days) {
+  const n = _isoDayNumber_(iso);
+  if (!Number.isFinite(n)) return '';
+  return new Date((n + days) * 86400000).toISOString().slice(0, 10);
+}
+
+function _todayIsoBangkok_() {
+  return Utilities.formatDate(new Date(), CHECKIN_PICKER_TIMEZONE, 'yyyy-MM-dd');
+}
+
+function _isoToThai_(iso) {
+  const n = _isoDayNumber_(iso);
+  if (!Number.isFinite(n)) return String(iso || '-');
+  return _thaiDate_(new Date(String(iso).slice(0, 10) + 'T12:00:00+07:00'));
+}
+
+// ค่าในชีทเป็น Date (ตาม timezone ของสเปรดชีต) หรือข้อความ ISO / M/d/yyyy
+function _sheetDateToIso_(value, ssTimeZone) {
+  if (value instanceof Date && !isNaN(value)) {
+    return Utilities.formatDate(value, ssTimeZone || CHECKIN_PICKER_TIMEZONE, 'yyyy-MM-dd');
+  }
+  const s = String(value || '').trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${('0' + m[2]).slice(-2)}-${('0' + m[3]).slice(-2)}`;
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${('0' + m[1]).slice(-2)}-${('0' + m[2]).slice(-2)}`;
+  return '';
+}
+
+function _sheetTimeToText_(value, displayValue) {
+  const d = String(displayValue || '').trim();
+  const m = d.match(/^(\d{1,2}):(\d{2})/);
+  if (m) return `${('0' + m[1]).slice(-2)}:${m[2]}`;
+  return String(value || '').trim();
+}
+
+function _readV2ReservationCheckinState_(opts) {
+  const state = { found: false, reservationId: String(opts.reservationId || '').trim(), currentDate: '', currentTime: '', changesUsed: 0 };
+  try {
+    if (!MM_V2_SPREADSHEET_ID) return state;
+    const ss = SpreadsheetApp.openById(MM_V2_SPREADSHEET_ID);
+    const sh = ss.getSheetByName(MM_V2_RESERVATIONS_SHEET);
+    if (!sh) return state;
+    const range = sh.getDataRange();
+    const values = range.getValues();
+    const display = range.getDisplayValues();
+    if (values.length < 2) return state;
+    const headers = values[0].map(h => String(h || '').trim());
+    const rowIndex = _findV2ReservationRowIndex_(values, headers, opts);
+    if (rowIndex < 0) return state;
+
+    const colResId = hdrIdx(headers, ['reservationid', 'reservation id', 'res id', 'resid', 'booking id', 'booking', 'code', 'รหัสการจอง', 'รหัสจอง']);
+    const colConf = hdrIdx(headers, ['confirmedmovein', 'confirmed movein', 'confirmed move in', 'confirmed move-in']);
+    const colConfTime = hdrIdx(headers, ['confirmedmoveintime', 'confirmed movein time', 'confirmed move in time', 'confirmed time']);
+    const row = values[rowIndex - 1];
+    const rowDisplay = display[rowIndex - 1];
+
+    state.found = true;
+    if (colResId >= 0 && String(row[colResId] || '').trim()) state.reservationId = String(row[colResId]).trim();
+    if (colConf >= 0) state.currentDate = _sheetDateToIso_(row[colConf], ss.getSpreadsheetTimeZone());
+    if (colConfTime >= 0) state.currentTime = _sheetTimeToText_(row[colConfTime], rowDisplay[colConfTime]);
+    state.changesUsed = _countCheckinChanges_(ss, state.reservationId, opts.roomId, opts.userId);
+  } catch (err) {
+    console.warn('_readV2ReservationCheckinState_ error: ' + err);
+  }
+  return state;
+}
+
+function _countCheckinChanges_(ss, reservationId, roomId, userId) {
+  const sh = ss.getSheetByName(CHECKIN_CHANGE_LOG_SHEET);
+  if (!sh || sh.getLastRow() < 2) return 0;
+  const values = sh.getRange(2, 1, sh.getLastRow() - 1, CHECKIN_CHANGE_LOG_HEADERS.length).getValues();
+  const norm = v => String(v || '').trim().toUpperCase().replace(/^#/, '');
+  const wantRes = norm(reservationId);
+  const wantRoom = norm(roomId);
+  const wantUser = String(userId || '').trim();
+  let count = 0;
+  values.forEach(r => {
+    if (String(r[9] || '').trim().toUpperCase() !== 'CHANGED') return;
+    const match = wantRes
+      ? norm(r[1]) === wantRes
+      : (norm(r[2]) === wantRoom && String(r[3] || '').trim() === wantUser);
+    if (match) count += 1;
+  });
+  return count;
+}
+
+// คืน { allowed, kind: first|time_only|change, rentStart } หรือ { allowed:false, result, note, tenantText }
+function _checkinChangeGate_(state, newDate, newTime, todayOpt) {
+  if (!state || !state.found || !state.currentDate) return { allowed: true, kind: 'first', rentStart: newDate };
+  if (newDate === state.currentDate) return { allowed: true, kind: 'time_only', rentStart: newDate };
+
+  const today = todayOpt || _todayIsoBangkok_();
+  const curThai = _isoToThai_(state.currentDate);
+  const curTime = state.currentTime ? ` เวลา ${state.currentTime} น.` : '';
+  const contact = 'หากจำเป็นต้องเปลี่ยนจริง ๆ กรุณาพิมพ์แจ้งเจ้าหน้าที่ในแชทนี้ค่ะ 🙏';
+
+  if (state.changesUsed >= CHECKIN_CHANGE_MAX) {
+    return {
+      allowed: false, result: 'REJECTED_LIMIT', note: `ใช้สิทธิ์เปลี่ยนวันครบ ${CHECKIN_CHANGE_MAX} ครั้งแล้ว`,
+      tenantText: [
+        `ห้องนี้ใช้สิทธิ์เปลี่ยนวันเช็คอินไปแล้ว (เปลี่ยนได้ ${CHECKIN_CHANGE_MAX} ครั้ง) ระบบจึงยังไม่เปลี่ยนให้ค่ะ`,
+        `🗓️ วันเช็คอินยังเป็น ${curThai}${curTime} เหมือนเดิม`,
+        contact
+      ].join('\n')
+    };
+  }
+
+  const daysToCurrent = _isoDayNumber_(state.currentDate) - _isoDayNumber_(today);
+  if (daysToCurrent < CHECKIN_CHANGE_MIN_DAYS) {
+    return {
+      allowed: false, result: 'REJECTED_7D', note: `เหลือ ${daysToCurrent} วันก่อนวันเช็คอินเดิม (ต้องอย่างน้อย ${CHECKIN_CHANGE_MIN_DAYS})`,
+      tenantText: [
+        `ตอนนี้เหลือไม่ถึง ${CHECKIN_CHANGE_MIN_DAYS} วันก่อนวันเช็คอิน (${curThai}) ทางหอได้จัดคิวแม่บ้านเตรียมห้องให้แล้ว จึงเปลี่ยนวันผ่านระบบไม่ได้ค่ะ`,
+        `🗓️ วันเช็คอินยังเป็น ${curThai}${curTime} และค่าเช่าเริ่มคิดตั้งแต่วันนั้นตามที่ลงไว้`,
+        '(ถ้าต้องการเปลี่ยนแค่เวลา ให้กดเลือกวันเดิมแล้วเปลี่ยนเวลาได้)',
+        contact
+      ].join('\n')
+    };
+  }
+
+  const daysToNew = _isoDayNumber_(newDate) - _isoDayNumber_(today);
+  if (daysToNew < CHECKIN_CHANGE_MIN_DAYS) {
+    const earliest = _isoAddDays_(today, CHECKIN_CHANGE_MIN_DAYS);
+    return {
+      allowed: false, result: 'REJECTED_NEWDATE', note: `วันใหม่ห่างจากวันนี้ ${daysToNew} วัน (ต้องอย่างน้อย ${CHECKIN_CHANGE_MIN_DAYS})`,
+      tenantText: [
+        `วันใหม่ต้องห่างจากวันนี้อย่างน้อย ${CHECKIN_CHANGE_MIN_DAYS} วัน เพื่อให้แม่บ้านเตรียมห้องได้ทันค่ะ`,
+        `เลือกได้ตั้งแต่ ${_isoToThai_(earliest)} เป็นต้นไป กดเลือกใหม่จากปุ่มเดิมได้เลย (ครั้งนี้ยังไม่นับสิทธิ์)`,
+        `🗓️ ตอนนี้วันเช็คอินยังเป็น ${curThai}${curTime}`
+      ].join('\n')
+    };
+  }
+
+  const rentStart = newDate > state.currentDate ? state.currentDate : newDate;
+  return { allowed: true, kind: 'change', rentStart };
+}
+
+function _checkinChangeRulesText_(pickedIso, todayOpt) {
+  const today = todayOpt || _todayIsoBangkok_();
+  const deadline = _isoAddDays_(pickedIso, -CHECKIN_CHANGE_MIN_DAYS);
+  const lines = [
+    '📌 เงื่อนไขการเปลี่ยนวันเช็คอิน',
+    `• เปลี่ยนวันได้ ${CHECKIN_CHANGE_MAX} ครั้ง โดยกดเลือกใหม่จากปุ่มเดิม`,
+    `• ต้องเปลี่ยนก่อนวันเช็คอินอย่างน้อย ${CHECKIN_CHANGE_MIN_DAYS} วัน และวันใหม่ต้องห่างจากวันที่เปลี่ยนอย่างน้อย ${CHECKIN_CHANGE_MIN_DAYS} วัน`,
+    `• หากเลื่อนให้ช้าลง ค่าเช่ายังคิดตั้งแต่ ${_isoToThai_(pickedIso)} ตามที่เลือกไว้ เพราะทางหอจัดคิวแม่บ้านเตรียมห้องให้ตามวันนี้`,
+    `• ภายใน ${CHECKIN_CHANGE_MIN_DAYS} วันก่อนเข้าอยู่ เปลี่ยนวันผ่านระบบไม่ได้ (เปลี่ยนเฉพาะเวลาในวันเดิมได้)`
+  ];
+  if (deadline && deadline < today) {
+    lines.push(`⚠️ วันที่เลือกเหลือไม่ถึง ${CHECKIN_CHANGE_MIN_DAYS} วัน จึงเปลี่ยนวันผ่านระบบไม่ได้แล้ว`);
+  } else if (deadline) {
+    lines.push(`⏰ เปลี่ยนวันได้ถึง ${_isoToThai_(deadline)}`);
+  }
+  return lines.join('\n');
+}
+
+function _logCheckinChange_(state, entry) {
+  try {
+    if (!MM_V2_SPREADSHEET_ID) return;
+    const ss = SpreadsheetApp.openById(MM_V2_SPREADSHEET_ID);
+    let sh = ss.getSheetByName(CHECKIN_CHANGE_LOG_SHEET);
+    if (!sh) {
+      sh = ss.insertSheet(CHECKIN_CHANGE_LOG_SHEET);
+      sh.getRange(1, 1, 1, CHECKIN_CHANGE_LOG_HEADERS.length).setValues([CHECKIN_CHANGE_LOG_HEADERS]);
+    }
+    sh.appendRow([
+      Utilities.formatDate(new Date(), CHECKIN_PICKER_TIMEZONE, 'yyyy-MM-dd HH:mm:ss'),
+      (state && state.reservationId) || entry.reservationId || '',
+      entry.roomId || '',
+      entry.userId || '',
+      (state && state.currentDate) || '',
+      (state && state.currentTime) || '',
+      entry.toDate || '',
+      entry.toTime || '',
+      entry.rentStart || '',
+      entry.result || '',
+      entry.note || ''
+    ]);
+  } catch (err) {
+    console.warn('_logCheckinChange_ error: ' + err);
+  }
+}
+
+function _notifyStaffCheckinChange_(text) {
+  try {
+    pushMessage(CHECKIN_CHANGE_STAFF_GROUP_ID, [{ type: 'text', text }]);
+  } catch (err) {
+    console.warn('_notifyStaffCheckinChange_ error: ' + err);
+  }
+}
+
+function _findV2ReservationRowIndex_(values, headers, opts) {
+  const roomId = String(opts.roomId || '').trim().toUpperCase();
+  const userId = String(opts.userId || '').trim();
+  const colResId = hdrIdx(headers, ['reservationid', 'reservation id', 'res id', 'resid', 'booking id', 'booking', 'code', 'รหัสการจอง', 'รหัสจอง']);
+  const colRoom = hdrIdx(headers, ['roomid', 'room id', 'room', 'ห้อง']);
+  const colLine = hdrIdx(headers, ['lineuserid', 'line user id', 'line user', 'lineid', 'line id', 'ผู้ใช้ไลน์']);
+  const wantRes = String(opts.reservationId || '').trim().toUpperCase().replace(/^#/, '');
+
+  if (wantRes && colResId >= 0) {
+    const idx = _findReservationRowById_(values, colResId, wantRes);
+    if (idx >= 0) return idx;
+  }
+  const scan = (pred) => {
+    for (let i = values.length - 1; i >= 1; i--) {
+      const rowRoom = colRoom >= 0 ? String(values[i][colRoom] || '').trim().toUpperCase() : '';
+      const rowUser = colLine >= 0 ? String(values[i][colLine] || '').trim() : '';
+      if (pred(rowRoom, rowUser)) return i + 1;
+    }
+    return -1;
+  };
+  let idx = -1;
+  if (roomId && userId) idx = scan((r, u) => r === roomId && u === userId);
+  if (idx < 0 && roomId) idx = scan((r) => r === roomId);
+  if (idx < 0 && userId) idx = scan((_r, u) => u === userId);
+  return idx;
 }
 
 function _updateRoomCheckinSelection_(roomId, selection) {
@@ -976,9 +1269,6 @@ function _updateV2ReservationCheckin_(opts) {
   if (values.length < 2) return { ok: false, reason: 'no_rows' };
 
   const headers = values[0].map(h => String(h || '').trim());
-  const colResId = hdrIdx(headers, ['reservationid', 'reservation id', 'res id', 'resid', 'booking id', 'booking', 'code', 'รหัสการจอง', 'รหัสจอง']);
-  const colRoom = hdrIdx(headers, ['roomid', 'room id', 'room', 'ห้อง']);
-  const colLine = hdrIdx(headers, ['lineuserid', 'line user id', 'line user', 'lineid', 'line id', 'ผู้ใช้ไลน์']);
   const colConf = hdrIdx(headers, [
     'confirmedmovein',
     'confirmed movein',
@@ -1004,37 +1294,7 @@ function _updateV2ReservationCheckin_(opts) {
     return { ok: false, reason: 'missing_confirmed_columns' };
   }
 
-  const normResId = (v) => String(v || '').trim().toUpperCase().replace(/^#/, '');
-  const wantRes = normResId(reservationId);
-
-  let rowIndex = -1;
-  if (wantRes && colResId >= 0) {
-    rowIndex = _findReservationRowById_(values, colResId, wantRes);
-  }
-
-  if (rowIndex < 0 && (roomId || userId)) {
-    for (let i = values.length - 1; i >= 1; i--) {
-      const rowRoom = colRoom >= 0 ? String(values[i][colRoom] || '').trim().toUpperCase() : '';
-      const rowUser = colLine >= 0 ? String(values[i][colLine] || '').trim() : '';
-      if (roomId && userId) {
-        if (rowRoom === roomId && rowUser === userId) { rowIndex = i + 1; break; }
-      }
-    }
-  }
-
-  if (rowIndex < 0 && roomId) {
-    for (let i = values.length - 1; i >= 1; i--) {
-      const rowRoom = colRoom >= 0 ? String(values[i][colRoom] || '').trim().toUpperCase() : '';
-      if (rowRoom === roomId) { rowIndex = i + 1; break; }
-    }
-  }
-
-  if (rowIndex < 0 && userId) {
-    for (let i = values.length - 1; i >= 1; i--) {
-      const rowUser = colLine >= 0 ? String(values[i][colLine] || '').trim() : '';
-      if (rowUser === userId) { rowIndex = i + 1; break; }
-    }
-  }
+  const rowIndex = _findV2ReservationRowIndex_(values, headers, { roomId, userId, reservationId });
 
   if (rowIndex < 0) {
     return { ok: false, reason: 'no_matching_row', roomId, userId, reservationId };
